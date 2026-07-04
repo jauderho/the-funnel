@@ -1,4 +1,8 @@
 .git
-data/
-runs/
-.venv/
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+runs
+data

@@ -133,3 +133,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Design language switched from "Cyberdeck" to "catfu" (cassette-futurism):
   AESTHETIC_CONTRACT.md replaced; PLAN.md M8 updated (fader-style profile
   sliders supersede the PRD's gradient sliders; contract §13 checklist).
+
+### Fixed
+
+- Docker build: multi-stage Dockerfile — a `build-essential` builder stage
+  compiles hmmlearn/ruptures from source (no cp314/linux-aarch64 wheels),
+  the runtime stage stays compiler-free; container CMD preloads libstdc++
+  (resolved via ldconfig, amd64/arm64-portable) to fix an RTTI
+  symbol-visibility crash in hmmlearn's compiled extension under Python's
+  RTLD_LOCAL dlopen, and invokes uvicorn from the venv directly (no uv
+  re-resolution at container start).
+- `.dockerignore` now uses `**/` globs so nested `engine/.venv`, caches,
+  and bytecode are excluded — build context dropped from 419 MB to ~5 kB.

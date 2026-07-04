@@ -13,17 +13,24 @@ Known gaps and deferred work, stated plainly per the honesty-by-design principle
 - **Intraday is unsupported in v1.** Only EOD data is fetched/backtested; slider
   positions implying intraday behavior are labeled "unsupported in v1" in the UI,
   not silently downgraded.
-- **Docker build could not be verified in this environment.** `docker` CLI is
-  present but no daemon is running (no Docker Desktop/OrbStack installed;
-  `docker build .` fails with `dial unix .../docker.sock: connect: no such file or
-  directory`). Verified instead via static review: `Dockerfile` copy layout, `uv
-  sync --frozen --no-dev`, the `funnel.api.app:create_app` factory string, and
-  `FUNNEL_WEB_DIR=/app/web` all line up with `_resolve_web_dir()` in
-  `engine/src/funnel/api/app.py`. First real `docker build . && docker compose up`
-  should still be watched once a daemon is available.
-- **`.dockerignore` was missing `data/`** (cached yfinance parquet + saved profiles)
-  — fixed in this pass; re-verify the built image doesn't bundle stale local cache
-  data once a real build is possible.
+- **Docker build is now verified end-to-end (resolved).** A real `docker build .`
+  with OrbStack running surfaced two problems the earlier static review couldn't
+  catch, both now fixed: (1) `hmmlearn`/`ruptures` have no prebuilt wheel for
+  cp314/linux-aarch64 and source-build, but the single-stage image had no
+  compiler — fixed with a multi-stage `Dockerfile` (`build-essential` in a
+  `builder` stage only, copied `.venv` into a slim runtime stage); (2) the
+  compiled `hmmlearn._hmmc` extension resolves libstdc++ RTTI/vtable symbols
+  (`_ZTVN10__cxxabiv120__function_type_infoE`) via `RTLD_LOCAL` dlopen, which
+  fails to interpose across independently-loaded extension modules on this base
+  image — fixed by preloading libstdc++ globally in the container `CMD`
+  (`LD_PRELOAD` resolved via `ldconfig` so it works on both amd64 and arm64).
+  `.dockerignore` also switched from top-level (`.venv/`, `data/`) to `**/`-glob
+  patterns, since context-root-relative patterns didn't match `engine/.venv` —
+  this cut build context from 419MB to 4.72kB. `docker build -t funnel:test .`
+  and `docker compose up -d` both succeed; `curl localhost:8000/api/health`
+  returns `{"status":"ok","version":"0.1.0"}` and `/` serves the SPA HTML.
+  Still pending: a real yfinance-data compose run (see the item above) has not
+  been watched inside this container.
 - **Repo-level GitHub Actions workflows are currently failing** (unrelated to the
   funnel engine itself): Codespell, Gitlab Sync, Lint Code Base, and Security
   Scorecard all show `failure` as of this pass (`bash scripts/checkWorkflows.sh
