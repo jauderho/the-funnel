@@ -8,7 +8,7 @@ I am the **orchestrator** (per AGENTS.md Model Contract). All implementation is 
 
 ## Decisions (user-confirmed)
 
-1. **Architecture:** Python (FastAPI) quant core + **Cyberdeck vanilla single-file SPA** frontend (`web/index.html`), fully honoring AESTHETIC_CONTRACT.md (zero-build, no framework, hand-built SVG viz). Contract wins over PRD §12's React preference. Dockerized, local-first.
+1. **Architecture:** Python (FastAPI) quant core + **vanilla single-file SPA** frontend (`web/index.html`), fully honoring AESTHETIC_CONTRACT.md (zero-build, no framework, hand-built CSS/SVG viz). Contract wins over PRD §12's React preference. Dockerized, local-first. **Design language (updated 2026-07-03): "catfu" (cassette-futurism)** — the user replaced the original Cyberdeck contract; the PRD's gradient-track sliders are superseded by catfu fader-style controls (no gradients, no border-radius, mechanical motion only).
 2. **Options overlay (PRD §11.3): deferred to v2.** v1 keeps a pluggable seam (strategy/instrument abstractions) but builds nothing options-specific.
 3. **Sliders: hybrid.** Drawdown-tolerance and risk-tolerance map directly onto funnel filter thresholds (max-DD floor, Sharpe ceiling, min trades); capital and time-horizon soft-filter/re-rank eligible families and universe. Both mappings are explicit, logged, and shown in the UI.
 4. **Data: free EOD via yfinance** behind a pluggable `DataSource` protocol, with on-disk caching. Intraday slider positions labeled "unsupported in v1".
@@ -63,7 +63,7 @@ the-funnel/
 │   │   └── api/                 # FastAPI app: run pipeline as background job,
 │   │                            #   poll status, fetch results; serves web/ statics
 │   └── tests/                   # pytest — see Verification
-├── web/index.html               # Cyberdeck SPA: sliders, screener, funnel report, charts
+├── web/index.html               # catfu SPA: profile faders, screener, funnel report, charts
 ├── Dockerfile, compose.yaml
 └── docs/ARCHITECTURE.md
 ```
@@ -84,7 +84,7 @@ the-funnel/
 | M5 | Regime layer (PRD §9) | Detector protocol, HMM + 3 comparators, regime tagging, regime-conditioned performance in all reports | **Fable Low** |
 | M6 | Layer stack + portfolio (PRD §10, §11.4) | Sizing/combine/routing layers, per-layer on/off with attribution, correlation matrix + redundancy flags | **Fable Low** |
 | M7 | Profiles + slider mapping (PRD §8, §11.1) | Profile model/store, hybrid slider→threshold/ranking mapping, presets, screener filtering incl. hard-constraint exclusions | **Sonnet** |
-| M8 | Cyberdeck SPA (PRD §8, §11.5, contract) | Single-file UI: gradient sliders w/ snap points, profile save/load, run + poll, funnel attrition viz, sensitivity/bootstrap/comparison views, hero readout, dark/light, print, CSV download links | **Fable Low** (contract compliance is high-craft) |
+| M8 | catfu SPA (PRD §8, §11.5, contract) | Single-file UI: fader-style profile sliders w/ snap points, profile save/load, run + poll, funnel attrition viz, sensitivity/bootstrap/comparison views, instrument-panel readouts, dark/light rocker toggle, CSV download links | **Fable Low** (contract compliance is high-craft) |
 | M9 | Integration + hardening | End-to-end run, Docker verification, docs, CHANGELOG finalization, full test/lint/type pass | **Sonnet** |
 
 Each milestone: implementor works from a written task spec (scope, interfaces, acceptance checks); I review the diff against the spec and PRD before accepting; one signed logical commit per milestone (or finer). CHANGELOG.md updated at each milestone.
@@ -100,7 +100,7 @@ Each milestone: implementor works from a written task spec (scope, interfaces, a
   - Slider mapping: monotonicity (e.g., shallower DD tolerance ⇒ strictly tighter DD filter) and preset round-trips.
 - **Quality gates:** `ruff check` + `ruff format --check` + `ty` clean; all functions typed; `uv run pytest` green — run per milestone, results reported honestly.
 - **End-to-end:** `docker compose up`, run full pipeline on the real 30-asset universe (cached data), confirm thousands of backtests reported, all seven CSVs written, funnel attrition path printed and rendered.
-- **UI:** preview at 390/768/1280 px, dark+light, and run the AESTHETIC_CONTRACT §10 compliance checklist item-by-item before accepting M8.
+- **UI:** preview at 375/768/1280 px, dark+light, and run the AESTHETIC_CONTRACT (catfu) §13 compliance checklist item-by-item before accepting M8.
 - **Honesty spot-check:** verify negative/fragile results actually appear in the report for at least one known-weak family (e.g., naked single-asset momentum, which the PRD predicts scores near zero).
 
 ## Success criteria (from PRD §14, used as acceptance)

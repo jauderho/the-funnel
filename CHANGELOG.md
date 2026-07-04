@@ -75,3 +75,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   refits (never fit-on-full-then-label-the-past); detector comparison and
   agreement matrix; `regime_conditioned_metrics` and
   `write_regime_performance` → `regime_performance.csv`.
+- M6: Strategy layer stack (`funnel.layers`) — position sizing (volatility
+  targeting and ATR risk sizing, both causal, leverage-capped at 1.0),
+  uncorrelated-signal combining with greedy correlation-bounded selection,
+  and regime routing (zero exposure outside a strategy's preferred regime);
+  `run_stack` with independent `LayerToggles` per layer and
+  `attribution_table` isolating each layer's marginal Sharpe/drawdown/
+  win-rate contribution → `layer_attribution.csv`.
+- M6: Portfolio view (`funnel.portfolio.correlation`) — pairwise strategy
+  correlation matrix with a minimum-overlap guard and redundancy flags for
+  highly correlated pairs → `correlation_matrix.csv`.
+
+### Changed
+
+- Design language switched from "Cyberdeck" to "catfu" (cassette-futurism):
+  AESTHETIC_CONTRACT.md replaced; PLAN.md M8 updated (fader-style profile
+  sliders supersede the PRD's gradient sliders; contract §13 checklist).
