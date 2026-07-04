@@ -53,3 +53,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rates and mean OOS Sharpe from the raw sweep DataFrame, embedding the exact
   `FunnelThresholds` applied; `render_text`, `to_dict`, and
   `write_funnel_report` (→ `funnel_report.csv`) expose it as text, dict, and CSV.
+- M3: Parameter sensitivity (`funnel.robustness.sensitivity`) — per-family
+  mean/std/positive-fraction of OOS Sharpe across parameter configs
+  (curve-fit red-flag detection); `write_sensitivity` → `sensitivity.csv`.
+- M3: Bootstrap stress test (`funnel.robustness.bootstrap`) — drawdown
+  percentiles and worst-case drawdown from order permutations of each
+  survivor's stitched OOS returns (sequencing risk), Sharpe p5/p50/p95 from
+  with-replacement resamples, deterministic under a fixed seed; solid/fragile
+  verdict against the funnel's max-DD floor; `write_bootstrap` → `bootstrap.csv`.
+- M4: Cross-sectional momentum research check (`funnel.momentum.cross_sectional`)
+  — monthly (21-day) rank of the universe by trailing return at 3m/6m/12-1
+  lookbacks, long top third / short bottom third with turnover costs, scored
+  with the identical 5-window walk-forward discipline; side-by-side comparison
+  against single-asset momentum families and a plain-language verdict; flagged
+  research-only (long/short conflicts with the no-short tradeable track);
+  `write_cross_sectional` → `cross_sectional.csv`.
+- M5: Regime detection (`funnel.regime`) — `Regime` (trending/choppy),
+  `RegimeDetector` protocol, and four causal detectors: 200-day MA filter,
+  expanding-quantile realized-vol, ruptures change-point (expanding refit),
+  and a 2-state Gaussian HMM on [return, vol] with periodic expanding-window
+  refits (never fit-on-full-then-label-the-past); detector comparison and
+  agreement matrix; `regime_conditioned_metrics` and
+  `write_regime_performance` → `regime_performance.csv`.
