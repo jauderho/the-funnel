@@ -1,24 +1,1511 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>The Funnel</title>
+<meta charset="UTF-8">
+<title>the funnel</title>
+<script>
+(function () {
+  var stored = null;
+  try { stored = localStorage.getItem('funnel-theme'); } catch (e) {}
+  var theme = stored || (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  document.documentElement.setAttribute('data-theme', theme);
+})();
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Expanded:wght@700;800;900&family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@300;400;500;600&family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+/* ============================== TOKENS ================================ */
+:root, html[data-theme="dark"] {
+  --bg:        #121316;
+  --chrome:    #0e0f11;
+  --panel:     #1a1a18;
+  --panel-2:   #202123;
+  --panel-3:   #2a2b2e;
+
+  --ink:       #efece5;
+  --ink-dim:   #b2b2ac;
+  --ink-faint: #909089;
+  --line:      #303134;
+  --line-2:    #43444a;
+  --alu:       #d4d4d4;
+
+  --blue:        #2e7dc4;
+  --blue-bright: #5fb0f0;
+  --blue-core:   #235594;
+  --blue-deep:   #15364f;
+  --blue-dim:    #2a5e93;
+  --cyan:        #58c8df;
+  --cta-ink:     #04101c;
+
+  --screen-blue: #6bb6f5;
+  --amber:       #ff6a00;
+  --green:       #36e27b;
+  --brass:       #c9a24b;
+
+  --scan: rgba(255,255,255,.012);
+  --dot:  rgba(95,176,240,.05);
+
+  --grid: 8px;
+  --maxw: 1320px;
+}
+
+html[data-theme="light"] {
+  --bg:        #ece7dc;
+  --chrome:    #f4f0e7;
+  --panel:     #f6f2ea;
+  --panel-2:   #fbf8f1;
+  --panel-3:   #ffffff;
+
+  --ink:       #1a1a18;
+  --ink-dim:   #54544d;
+  --ink-faint: #61615a;
+  --line:      #cfc9bb;
+  --line-2:    #b3ac9b;
+  --alu:       #6b6b62;
+
+  --blue:        #1f6fb8;
+  --blue-bright: #145ea6;
+  --blue-core:   #235594;
+  --blue-deep:   #15364f;
+  --blue-dim:    #4a6e93;
+  --cyan:        #58c8df;
+  --cta-ink:     #f6fbff;
+
+  --scan: rgba(0,0,0,.018);
+  --dot:  rgba(35,85,148,.07);
+}
+
+/* ============================== RESET ================================= */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: auto; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+  font-weight: 300;
+  font-size: 13px;
+  line-height: 1.45;
+  text-transform: lowercase;
+  min-height: 100vh;
+  background-image:
+    repeating-linear-gradient(0deg, var(--scan) 0 1px, transparent 1px 3px);
+}
+button, input { font-family: inherit; color: inherit; }
+a { color: var(--blue-bright); }
+.wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+h1, h2, h3 { font-family: 'Archivo', system-ui, sans-serif; text-transform: lowercase; }
+
+::selection { background: var(--blue); color: var(--cta-ink); }
+
+/* ============================ MOTION =================================== */
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .12; } }
+.blinker { animation: blink 1s step-end infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .blinker { animation: none !important; opacity: 1 !important; }
+  .marquee-track { animation: none !important; }
+  * { transition: none !important; }
+}
+
+/* ============================ FOCUS ==================================== */
+:focus-visible {
+  outline: 2px solid var(--screen-blue);
+  outline-offset: 2px;
+}
+
+/* ============================ STATUS BAR =============================== */
+.statusbar {
+  position: sticky; top: 0; z-index: 50;
+  height: 38px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line-2);
+  display: flex; align-items: stretch;
+}
+.statusbar .wrap { display: flex; align-items: stretch; width: 100%; }
+.seg {
+  display: flex; align-items: center;
+  padding: 0 12px;
+  border-right: 1px solid var(--line);
+  white-space: nowrap;
+}
+.seg:last-child { border-right: none; }
+.seg.grow { flex: 1; overflow-x: auto; }
+.wordmark {
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'Archivo', system-ui, sans-serif;
+  font-weight: 700; font-size: 13px; letter-spacing: -0.01em;
+}
+.wordmark .mark {
+  width: 16px; height: 16px; background: var(--blue); position: relative; flex: none;
+}
+.wordmark .mark::after {
+  content: ""; position: absolute; inset: 4px; background: var(--chrome);
+}
+.navrow { display: flex; gap: 0; }
+.navlink {
+  background: none; border: none; cursor: pointer;
+  padding: 0 10px; height: 38px;
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-dim);
+  border-right: 1px solid var(--line);
+  transition: none;
+}
+.navlink:hover { background: var(--blue); color: var(--cta-ink); }
+.navlink.active { color: var(--blue-bright); }
+.navlink.active[aria-current="page"] { background: var(--panel-2); }
+.clockseg {
+  font-size: 11px; letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+.led {
+  width: 7px; height: 7px; background: var(--ink-faint); flex: none; margin-right: 6px;
+}
+.led.on { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.led.rec { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
+.led.blue { background: var(--screen-blue); box-shadow: 0 0 4px var(--screen-blue); }
+.led.off { background: var(--ink-faint); box-shadow: none; }
+
+/* theme rocker */
+.tog {
+  position: relative;
+  width: 56px; height: 22px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  cursor: pointer;
+  flex: none;
+}
+.tog .glyph {
+  position: absolute; top: 0; width: 27px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--ink-dim);
+}
+.tog .glyph.moon { left: 0; }
+.tog .glyph.sun { right: 0; }
+.tog-knob {
+  position: absolute; top: 1px; left: 1px;
+  width: 27px; height: 18px;
+  background: var(--blue);
+}
+html[data-theme="light"] .tog-knob { left: auto; right: 1px; }
+html[data-theme="light"] .tog .glyph.sun { color: var(--cta-ink); }
+html[data-theme="dark"] .tog .glyph.moon { color: var(--cta-ink); }
+
+/* ============================ SECTIONS ================================= */
+section { padding: 32px 0; border-bottom: 1px solid var(--line); }
+section:last-of-type { border-bottom: none; }
+.section-head {
+  display: flex; align-items: baseline; gap: 16px; margin-bottom: 20px;
+}
+.section-head .ord {
+  font-family: 'Archivo Expanded', sans-serif; font-weight: 800; font-size: 20px;
+  color: var(--blue-bright);
+}
+.section-head h2 { font-size: clamp(20px, 2.6vw, 28px); font-weight: 700; letter-spacing: -0.02em; }
+.section-head .desc { font-size: 12px; color: var(--ink-dim); margin-left: auto; max-width: 40ch; text-align: right; }
+
+/* ============================ LABELS ==================================== */
+.lbl {
+  font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-dim); user-select: none;
+}
+.lbl.dim { color: var(--ink-faint); }
+
+/* ============================ BUTTONS =================================== */
+.btn {
+  background: var(--panel-2); border: 1px solid var(--line-2); color: var(--ink);
+  padding: 8px 14px; cursor: pointer; transition: none;
+  font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.btn:hover { border-color: var(--blue); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--blue); color: var(--cta-ink); border-color: var(--blue); }
+.btn.primary:hover { background: var(--blue-bright); border-color: var(--blue-bright); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-row { display: flex; gap: 0; }
+.btn-row .btn { border-left: none; }
+.btn-row .btn:first-child { border-left: 1px solid var(--line-2); }
+.btn.big { padding: 18px 32px; font-size: 13px; }
+
+.tinybtn {
+  background: var(--panel-2); border: 1px solid var(--line-2); color: var(--ink-dim);
+  padding: 4px 8px; cursor: pointer; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.tinybtn.on { background: var(--blue); color: var(--cta-ink); border-color: var(--blue); }
+
+input[type="text"] {
+  background: var(--panel-2); border: 1px solid var(--line-2); color: var(--ink);
+  padding: 8px 10px; font-size: 12px;
+}
+input[type="text"]:focus { border-color: var(--blue); }
+
+/* ============================ CHASSIS BLOCK (hero) ====================== */
+.chassis {
+  background: var(--blue-core);
+  padding: 24px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  position: relative;
+}
+.chassis .legend {
+  color: #bcd9f5; font-size: 7px; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.fader-module {
+  background: var(--blue-deep);
+  border: 1px solid #0a3252;
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.fader-module .fhead { display: flex; justify-content: space-between; align-items: baseline; }
+.fader-module .fhead .legend { color: #bcd9f5; }
+.fader-module .lcdval {
+  background: #06121f; border: 1px solid #0a3252;
+  color: var(--screen-blue);
+  font-size: 15px; padding: 4px 8px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 6px rgba(107,182,245,.7);
+  min-width: 3.2em; text-align: right;
+}
+.fader-desc { font-size: 10px; color: #9fc4ea; line-height: 1.4; min-height: 2.6em; }
+.fader-endpoints { display: flex; justify-content: space-between; font-size: 7px; color: #bcd9f5; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.fader-track {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 26px;
+  background: #0c2438;
+  border: 1px solid #0a3252;
+  outline: none;
+  cursor: ew-resize;
+}
+.fader-track::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 30px;
+  background: var(--blue-bright);
+  border: 1px solid #9fd4ff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.3), inset 0 -2px 0 rgba(0,0,0,.3);
+  cursor: ew-resize;
+  margin-top: -2px;
+}
+.fader-track::-moz-range-thumb {
+  width: 14px; height: 30px;
+  background: var(--blue-bright);
+  border: 1px solid #9fd4ff;
+  cursor: ew-resize;
+}
+.fader-track::-moz-range-track { background: #0c2438; height: 26px; border: 1px solid #0a3252; }
+
+.warning-strip {
+  background: #080705; border: 1px solid #1c150a; color: var(--amber);
+  font-size: 10px; padding: 8px 10px; margin-top: 8px;
+  display: none;
+}
+.warning-strip.show { display: block; }
+
+.chassis-presets {
+  grid-column: 1 / -1;
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding-top: 16px; border-top: 1px solid #0a3252;
+}
+.chassis-presets .legend { color: #bcd9f5; margin-right: 4px; }
+
+/* mapping readout panel */
+.crt {
+  background: #080705; border: 1px solid #1c150a;
+  padding: 16px;
+  position: relative;
+  background-image: repeating-linear-gradient(rgba(255,106,0,.04) 0 1px, transparent 1px 3px);
+}
+.crt-title {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px; color: var(--amber);
+  text-shadow: 0 0 6px rgba(255,106,0,.6);
+  margin-bottom: 12px;
+}
+.crt-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-size: 11px; color: var(--amber);
+  border-bottom: 1px dotted #3a2410;
+  padding: 3px 0;
+}
+.crt-row .k { color: #ffb066; }
+.crt-row:last-child { border-bottom: none; }
+.crt-cursor { color: var(--amber); }
+
+/* ============================ FADER (small, run rows) =================== */
+.field-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field-row label.lbl { display: block; }
+
+/* ============================ TABLES (hairline zoned) ==================== */
+.ztable { width: 100%; border-collapse: collapse; font-size: 11px; }
+.ztable th, .ztable td {
+  text-align: left; padding: 8px 10px;
+  border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.ztable th {
+  font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim);
+  background: var(--panel-2);
+}
+.ztable th:last-child, .ztable td:last-child { border-right: none; }
+.ztable tr:last-child td { border-bottom: none; }
+.ztable tbody tr:hover td { background: var(--panel); }
+.ztable td.num { text-align: right; }
+.ztable td.neg { color: var(--amber); }
+.ztable td.pos { color: var(--green); }
+
+.pill {
+  display: inline-block; padding: 3px 8px; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  border: 1px solid var(--line-2);
+}
+.pill.solid { color: var(--green); border-color: var(--green); }
+.pill.fragile { color: var(--amber); border-color: var(--amber); background: color-mix(in srgb, var(--amber) 12%, transparent); font-weight: 600; }
+.pill.tradeable { color: var(--screen-blue); border-color: var(--blue-dim); }
+.pill.research { color: var(--ink-faint); border-color: var(--line-2); }
+.pill.low-frac { color: var(--amber); border-color: var(--amber); }
+
+/* ============================ FUNNEL VIZ ================================ */
+.funnel-viz { display: flex; flex-direction: column; gap: 2px; margin: 20px 0; }
+.funnel-step {
+  display: grid; grid-template-columns: 220px 1fr auto; align-items: center; gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 10px 14px;
+}
+.funnel-step .fname { font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.funnel-bar-track { height: 20px; background: var(--panel-2); border: 1px solid var(--line); position: relative; }
+.funnel-bar-fill { height: 100%; background: var(--blue); }
+.funnel-count { font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.funnel-count .pct { color: var(--ink-faint); font-size: 10px; margin-left: 6px; }
+
+/* ============================ CSV CHIP =================================== */
+.csv-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  border: 1px solid var(--line-2); padding: 4px 8px;
+  color: var(--ink-dim); text-decoration: none;
+}
+.csv-chip:hover { border-color: var(--blue); color: var(--blue-bright); }
+.csv-chip::before { content: "\2b07"; font-size: 10px; }
+
+/* ============================ EMPTY / ERROR STATES ======================= */
+.diag {
+  background: #080705; border: 1px solid #1c150a; color: var(--amber);
+  font-size: 11px; padding: 12px; font-family: 'IBM Plex Mono', monospace;
+}
+.diag::before { content: "> "; }
+.empty-state {
+  border: 1px dashed var(--line-2); padding: 24px; text-align: center;
+  color: var(--ink-faint); font-size: 12px;
+}
+
+/* ============================ RUN CONSOLE ================================ */
+.stage-leds { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0; }
+.stage-led-item { display: flex; align-items: center; gap: 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); }
+.stage-led-item .led { margin-right: 0; }
+.stage-led-item.active { color: var(--screen-blue); }
+.stage-led-item.done { color: var(--green); }
+
+.runs-list-item {
+  display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center;
+  padding: 8px 10px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 11px;
+}
+.runs-list-item:hover { background: var(--panel); }
+.runs-list-item.selected { background: var(--panel-2); border-left: 2px solid var(--blue); }
+.runs-list-item:last-child { border-bottom: none; }
+
+/* ============================ AGREEMENT MATRIX ============================ */
+.matrix-cell {
+  width: 44px; height: 30px; display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-variant-numeric: tabular-nums; color: var(--screen-blue);
+  background: #06121f; border: 1px solid #0a3252;
+}
+
+/* ============================ VU / PROGRESS SWEEP ========================= */
+.vu { display: flex; gap: 2px; height: 16px; }
+.vu .seg2 { width: 6px; background: var(--ink-faint); }
+.vu .seg2.lit-g { background: var(--green); }
+.vu .seg2.lit-b { background: var(--screen-blue); }
+.vu .seg2.lit-a { background: var(--amber); }
+
+/* ============================ RESPONSIVE ================================= */
+@media (max-width: 980px) {
+  .chassis { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 780px) {
+  .section-head { flex-direction: column; align-items: flex-start; }
+  .section-head .desc { text-align: left; max-width: none; margin-left: 0; }
+}
+@media (max-width: 560px) {
+  .chassis { grid-template-columns: 1fr; }
+  .funnel-step { grid-template-columns: 1fr; }
+  .funnel-count { text-align: left; }
+}
+@media (max-width: 460px) {
+  .navrow .navlink span.full { display: none; }
+}
+
+footer {
+  background: var(--chrome); border-top: 1px solid var(--line-2);
+  padding: 16px 0; font-size: 9px; color: var(--ink-faint);
+}
+</style>
 </head>
 <body>
-  <h1>The Funnel</h1>
-  <p>UI arrives in M8.</p>
-  <p>API status: <span id="status">checking...</span></p>
-  <script>
-    fetch("/api/health")
-      .then((res) => res.json())
-      .then((data) => {
-        document.getElementById("status").textContent =
-          `${data.status} (v${data.version})`;
-      })
-      .catch(() => {
-        document.getElementById("status").textContent = "unreachable";
+
+<div class="statusbar">
+  <div class="wrap">
+    <div class="seg">
+      <span class="wordmark"><span class="mark"></span>the funnel</span>
+    </div>
+    <div class="seg">
+      <span class="led off" id="api-led"></span>
+      <span class="lbl" id="api-label">api&nbsp;offline</span>
+    </div>
+    <nav class="seg grow navrow" id="nav-row" aria-label="sections">
+      <button class="navlink active" data-target="view-profile" aria-current="page"><span class="full">profile</span></button>
+      <button class="navlink" data-target="view-run"><span class="full">run</span></button>
+      <button class="navlink" data-target="view-funnel"><span class="full">funnel</span></button>
+      <button class="navlink" data-target="view-robustness"><span class="full">robustness</span></button>
+      <button class="navlink" data-target="view-cross"><span class="full">cross-sect</span></button>
+      <button class="navlink" data-target="view-regime"><span class="full">regime</span></button>
+      <button class="navlink" data-target="view-layers"><span class="full">layers</span></button>
+    </nav>
+    <div class="seg clockseg" id="clock">--:--:--</div>
+    <div class="seg">
+      <button class="tog" id="theme-tog" role="switch" aria-checked="false" aria-label="toggle light/dark mode">
+        <span class="glyph moon">&#9789;</span>
+        <span class="glyph sun">&#9728;</span>
+        <span class="tog-knob"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+
+<!-- ======================= 01 PROFILE DECK (hero) ======================= -->
+<section id="view-profile">
+  <div class="section-head">
+    <span class="ord">01</span>
+    <h2>profile deck</h2>
+    <span class="desc">four faders set your funnel's hard thresholds and soft ranking &mdash; see exactly what they do below, live.</span>
+  </div>
+
+  <div class="chassis" role="group" aria-label="profile sliders">
+    <div class="fader-module">
+      <div class="fhead">
+        <span class="legend">capital</span>
+        <span class="lcdval" id="lcd-capital">0</span>
+      </div>
+      <div class="fader-desc">small books can trade niches; large ones can't.</div>
+      <input type="range" class="fader-track" id="fader-capital" min="0" max="100" value="50"
+        aria-label="capital: small book to institutional">
+      <div class="fader-endpoints"><span>small book</span><span>institutional</span></div>
+    </div>
+
+    <div class="fader-module">
+      <div class="fhead">
+        <span class="legend">risk tolerance</span>
+        <span class="lcdval" id="lcd-risk_tolerance">0</span>
+      </div>
+      <div class="fader-desc">how much heat you'll take for return.</div>
+      <input type="range" class="fader-track" id="fader-risk_tolerance" min="0" max="100" value="50"
+        aria-label="risk tolerance: conservative to aggressive">
+      <div class="fader-endpoints"><span>conservative</span><span>aggressive</span></div>
+    </div>
+
+    <div class="fader-module">
+      <div class="fhead">
+        <span class="legend">time horizon</span>
+        <span class="lcdval" id="lcd-time_horizon">0</span>
+      </div>
+      <div class="fader-desc">intraday vs multi-month changes everything.</div>
+      <input type="range" class="fader-track" id="fader-time_horizon" min="0" max="100" value="50"
+        aria-label="time horizon: intraday to multi-month">
+      <div class="fader-endpoints"><span>intraday</span><span>multi-month</span></div>
+      <div class="warning-strip" id="intraday-warning">intraday granularity unsupported in v1 &mdash; eod data only.</div>
+    </div>
+
+    <div class="fader-module">
+      <div class="fhead">
+        <span class="legend">drawdown tolerance</span>
+        <span class="lcdval" id="lcd-drawdown_tolerance">0</span>
+      </div>
+      <div class="fader-desc">the depth you can actually sit through.</div>
+      <input type="range" class="fader-track" id="fader-drawdown_tolerance" min="0" max="100" value="50"
+        aria-label="drawdown tolerance: shallow to deep">
+      <div class="fader-endpoints"><span>shallow</span><span>deep</span></div>
+    </div>
+
+    <div class="chassis-presets">
+      <span class="legend">presets</span>
+      <button class="btn" data-preset="Retirement Core">retirement core</button>
+      <button class="btn" data-preset="Swing Sandbox">swing sandbox</button>
+      <span style="flex:1"></span>
+      <input type="text" id="profile-name-input" placeholder="profile name" style="width:160px">
+      <button class="btn primary" id="save-profile-btn">save</button>
+      <select id="profile-load-select" class="btn" style="cursor:pointer;">
+        <option value="">load profile&hellip;</option>
+      </select>
+      <button class="btn" id="delete-profile-btn">delete</button>
+    </div>
+  </div>
+
+  <div style="height:20px"></div>
+
+  <div class="crt" id="mapping-readout" aria-live="polite">
+    <div class="crt-title">mapping readout</div>
+    <div id="mapping-rows">
+      <div class="diag">waiting for mapping preview&hellip;</div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= 02 RUN CONSOLE ================================ -->
+<section id="view-run" hidden>
+  <div class="section-head">
+    <span class="ord">02</span>
+    <h2>run console</h2>
+    <span class="desc">fires the full sweep &rarr; walk-forward &rarr; six-filter funnel pipeline for the current profile.</span>
+  </div>
+
+  <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">
+    <div>
+      <button class="btn primary big" id="run-btn">run funnel</button>
+      <div class="lbl" style="margin-top:8px;" id="run-active-profile">profile: (unsaved / ad-hoc)</div>
+    </div>
+
+    <div style="flex:1; min-width:280px;">
+      <div class="lbl">pipeline stage</div>
+      <div class="stage-leds" id="stage-leds"></div>
+      <div class="vu" id="vu-meter" aria-hidden="true"></div>
+      <div id="run-state-line" class="lbl dim" style="margin-top:8px;">state: idle</div>
+      <div id="run-error" class="diag" style="display:none; margin-top:8px;"></div>
+    </div>
+  </div>
+
+  <div style="height:24px"></div>
+  <div class="lbl">past runs</div>
+  <div id="runs-list" style="border:1px solid var(--line); margin-top:8px; max-height:280px; overflow-y:auto;">
+    <div class="empty-state">no runs yet</div>
+  </div>
+</section>
+
+<!-- ======================= 03 FUNNEL REPORT ============================== -->
+<section id="view-funnel" hidden>
+  <div class="section-head">
+    <span class="ord">03</span>
+    <h2>funnel report</h2>
+    <span class="desc">how much dies at every stage &mdash; and exactly which thresholds killed it.</span>
+  </div>
+  <div id="funnel-content"><div class="empty-state">no completed run selected yet.</div></div>
+</section>
+
+<!-- ======================= 04 ROBUSTNESS ================================= -->
+<section id="view-robustness" hidden>
+  <div class="section-head">
+    <span class="ord">04</span>
+    <h2>robustness</h2>
+    <span class="desc">parameter sensitivity per family, then a bootstrap stress test per survivor.</span>
+  </div>
+  <div id="robustness-content"><div class="empty-state">no completed run selected yet.</div></div>
+</section>
+
+<!-- ======================= 05 CROSS-SECTIONAL ============================ -->
+<section id="view-cross" hidden>
+  <div class="section-head">
+    <span class="ord">05</span>
+    <h2>cross-sectional</h2>
+    <span class="desc">ranking assets against each other, vs. single-asset momentum.</span>
+  </div>
+  <div id="cross-content"><div class="empty-state">no completed run selected yet.</div></div>
+</section>
+
+<!-- ======================= 06 REGIME ====================================== -->
+<section id="view-regime" hidden>
+  <div class="section-head">
+    <span class="ord">06</span>
+    <h2>regime</h2>
+    <span class="desc">detector comparison, agreement matrix, regime-conditioned survivor performance.</span>
+  </div>
+  <div id="regime-content"><div class="empty-state">no completed run selected yet.</div></div>
+</section>
+
+<!-- ======================= 07 LAYERS + PORTFOLIO ========================== -->
+<section id="view-layers" hidden>
+  <div class="section-head">
+    <span class="ord">07</span>
+    <h2>layers + portfolio</h2>
+    <span class="desc">base &rarr; sizing &rarr; routing &rarr; combining attribution, plus correlation redundancy flags.</span>
+  </div>
+  <div id="layers-content"><div class="empty-state">no completed run selected yet.</div></div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    the funnel v1 &mdash; honesty-by-design: attrition, drawdowns, and fragile survivors are reported, never filtered away.
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------------------------------------------------------------- state
+  var state = {
+    sliders: { capital: 50, risk_tolerance: 50, time_horizon: 50, drawdown_tolerance: 50 },
+    profiles: [],
+    activeProfileName: null,
+    runs: [],
+    selectedRunId: null,
+    pollTimer: null,
+    mappingTimer: null,
+  };
+
+  var SLIDER_KEYS = ["capital", "risk_tolerance", "time_horizon", "drawdown_tolerance"];
+  var PIPELINE_STAGES = ["data", "thresholds", "sweep", "attrition", "sensitivity", "bootstrap", "cross-sectional", "regime", "layers", "correlation", "screen", "report", "done"];
+
+  // ---------------------------------------------------------------- utils
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function el(tag, attrs, children) {
+    var e = document.createElement(tag);
+    if (attrs) for (var k in attrs) {
+      if (k === "class") e.className = attrs[k];
+      else if (k === "html") e.innerHTML = attrs[k];
+      else if (k === "text") e.textContent = attrs[k];
+      else e.setAttribute(k, attrs[k]);
+    }
+    (children || []).forEach(function (c) { e.appendChild(c); });
+    return e;
+  }
+  function fmtPct(v, digits) {
+    if (v === null || v === undefined || isNaN(v)) return "n/a";
+    return (v * 100).toFixed(digits === undefined ? 1 : digits) + "%";
+  }
+  function fmtNum(v, digits) {
+    if (v === null || v === undefined || isNaN(v)) return "n/a";
+    return Number(v).toFixed(digits === undefined ? 2 : digits);
+  }
+  function debounce(fn, ms) {
+    var t = null;
+    return function () {
+      var args = arguments;
+      clearTimeout(t);
+      t = setTimeout(function () { fn.apply(null, args); }, ms);
+    };
+  }
+  function apiError(prefix, err) {
+    return prefix + ": " + (err && err.message ? err.message : String(err));
+  }
+  function setDiag(container, msg) {
+    container.innerHTML = "";
+    container.appendChild(el("div", { class: "diag" }, [document.createTextNode(msg)]));
+  }
+
+  // ---------------------------------------------------------------- clock
+  function tickClock() {
+    var now = new Date();
+    var hh = String(now.getUTCHours()).padStart(2, "0");
+    var mm = String(now.getUTCMinutes()).padStart(2, "0");
+    var ss = String(now.getUTCSeconds()).padStart(2, "0");
+    $("#clock").textContent = hh + ":" + mm + ":" + ss + " utc";
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  // ---------------------------------------------------------------- theme
+  function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    try { localStorage.setItem("funnel-theme", theme); } catch (e) {}
+    $("#theme-tog").setAttribute("aria-checked", theme === "light" ? "true" : "false");
+  }
+  $("#theme-tog").addEventListener("click", function () {
+    var current = document.documentElement.getAttribute("data-theme");
+    applyTheme(current === "dark" ? "light" : "dark");
+  });
+  applyTheme(document.documentElement.getAttribute("data-theme") || "dark");
+
+  // ---------------------------------------------------------------- nav
+  var VIEWS = ["view-profile", "view-run", "view-funnel", "view-robustness", "view-cross", "view-regime", "view-layers"];
+  function showView(target) {
+    VIEWS.forEach(function (id) {
+      var section = document.getElementById(id);
+      if (section) section.hidden = (id !== target);
+    });
+    $all(".navlink").forEach(function (btn) {
+      var active = btn.dataset.target === target;
+      btn.classList.toggle("active", active);
+      if (active) btn.setAttribute("aria-current", "page");
+      else btn.removeAttribute("aria-current");
+    });
+  }
+  $all(".navlink").forEach(function (btn) {
+    btn.addEventListener("click", function () { showView(btn.dataset.target); });
+  });
+
+  // ---------------------------------------------------------------- api health
+  function checkHealth() {
+    fetch("/api/health").then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.json();
+    }).then(function () {
+      $("#api-led").className = "led on";
+      $("#api-label").textContent = "api online";
+    }).catch(function () {
+      $("#api-led").className = "led rec blinker";
+      $("#api-label").textContent = "api unreachable";
+    });
+  }
+  checkHealth();
+  setInterval(checkHealth, 15000);
+
+  // ---------------------------------------------------------------- faders
+  function readSliders() {
+    var s = {};
+    SLIDER_KEYS.forEach(function (k) { s[k] = parseInt($("#fader-" + k).value, 10); });
+    return s;
+  }
+  function setSliders(values) {
+    SLIDER_KEYS.forEach(function (k) {
+      if (values[k] !== undefined) {
+        $("#fader-" + k).value = values[k];
+        $("#lcd-" + k).textContent = values[k];
+      }
+    });
+    state.sliders = readSliders();
+    refreshMappingPreview();
+    updateIntradayWarning();
+  }
+  function updateIntradayWarning() {
+    var warn = $("#intraday-warning");
+    if (state.sliders.time_horizon < 20) warn.classList.add("show");
+    else warn.classList.remove("show");
+  }
+
+  SLIDER_KEYS.forEach(function (k) {
+    var input = $("#fader-" + k);
+    input.addEventListener("input", function () {
+      $("#lcd-" + k).textContent = input.value;
+      state.sliders[k] = parseInt(input.value, 10);
+      state.activeProfileName = null;
+      updateIntradayWarning();
+      debouncedMapping();
+    });
+  });
+
+  var debouncedMapping = debounce(refreshMappingPreview, 150);
+
+  function refreshMappingPreview() {
+    var s = state.sliders;
+    var qs = "capital=" + s.capital + "&risk_tolerance=" + s.risk_tolerance +
+      "&time_horizon=" + s.time_horizon + "&drawdown_tolerance=" + s.drawdown_tolerance;
+    fetch("/api/mapping/preview?" + qs).then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.json();
+    }).then(renderMapping).catch(function (err) {
+      setDiag($("#mapping-rows"), apiError("mapping preview failed", err));
+    });
+  }
+
+  function renderMapping(data) {
+    var rows = $("#mapping-rows");
+    rows.innerHTML = "";
+    var t = data.thresholds, w = data.ranking_weights, ex = data.explain_mapping;
+
+    function row(k, v) {
+      return el("div", { class: "crt-row" }, [
+        el("span", { class: "k", text: k }),
+        el("span", { text: v }),
+      ]);
+    }
+    rows.appendChild(row("max dd floor", fmtPct(t.max_dd_floor)));
+    rows.appendChild(row("min oos sharpe", fmtNum(t.min_oos_sharpe)));
+    rows.appendChild(row("max oos sharpe", fmtNum(t.max_oos_sharpe)));
+    rows.appendChild(row("max oos/is ratio", fmtNum(t.max_oos_is_ratio)));
+    rows.appendChild(row("min trades", t.min_trades));
+    rows.appendChild(row("require positive is sharpe", t.require_positive_is_sharpe ? "yes" : "no"));
+    rows.appendChild(row("niche penalty", fmtNum(w.niche_penalty)));
+    rows.appendChild(row("turnover preference", (w.turnover_preference >= 0 ? "+" : "") + fmtNum(w.turnover_preference)));
+
+    var explainBlock = el("div", { style: "margin-top:10px; padding-top:10px; border-top:1px dotted #3a2410;" });
+    ["drawdown_tolerance", "risk_tolerance", "capital", "time_horizon"].forEach(function (key) {
+      if (ex[key]) {
+        var isWarn = ex[key].indexOf("WARNING") !== -1;
+        explainBlock.appendChild(el("div", {
+          style: "font-size:10px; padding:3px 0; color:" + (isWarn ? "var(--amber)" : "#ffb066") + ";",
+          text: ex[key]
+        }));
+      }
+    });
+    rows.appendChild(explainBlock);
+    rows.appendChild(el("div", { class: "crt-cursor blinker", text: "█" }));
+  }
+
+  // ---------------------------------------------------------------- presets
+  $all("[data-preset]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var name = btn.dataset.preset;
+      var p = state.profiles.find(function (x) { return x.name === name; });
+      if (p) {
+        setSliders(p.sliders);
+        state.activeProfileName = name;
+        $("#run-active-profile").textContent = "profile: " + name;
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------- profiles CRUD
+  function loadProfiles() {
+    fetch("/api/profiles").then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.json();
+    }).then(function (profiles) {
+      state.profiles = profiles;
+      var select = $("#profile-load-select");
+      select.innerHTML = '<option value="">load profile…</option>';
+      profiles.forEach(function (p) {
+        var opt = el("option", { value: p.name, text: p.name + (p.preset ? " (preset)" : "") });
+        select.appendChild(opt);
       });
-  </script>
+    }).catch(function (err) {
+      setDiag($("#mapping-rows"), apiError("loading profiles failed", err));
+    });
+  }
+  loadProfiles();
+
+  $("#profile-load-select").addEventListener("change", function () {
+    var name = this.value;
+    if (!name) return;
+    var p = state.profiles.find(function (x) { return x.name === name; });
+    if (p) {
+      setSliders(p.sliders);
+      state.activeProfileName = name;
+      $("#run-active-profile").textContent = "profile: " + name;
+    }
+  });
+
+  $("#save-profile-btn").addEventListener("click", function () {
+    var name = $("#profile-name-input").value.trim();
+    if (!name) { setDiag($("#mapping-rows"), "enter a profile name before saving"); return; }
+    var s = state.sliders;
+    fetch("/api/profiles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: name, capital: s.capital, risk_tolerance: s.risk_tolerance,
+        time_horizon: s.time_horizon, drawdown_tolerance: s.drawdown_tolerance
+      })
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || ("status " + r.status)); });
+      return r.json();
+    }).then(function () {
+      state.activeProfileName = name;
+      $("#run-active-profile").textContent = "profile: " + name;
+      $("#profile-name-input").value = "";
+      loadProfiles();
+    }).catch(function (err) {
+      setDiag($("#mapping-rows"), apiError("save profile failed", err));
+    });
+  });
+
+  $("#delete-profile-btn").addEventListener("click", function () {
+    var name = $("#profile-load-select").value;
+    if (!name) { setDiag($("#mapping-rows"), "select a profile to delete"); return; }
+    fetch("/api/profiles/" + encodeURIComponent(name), { method: "DELETE" }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || ("status " + r.status)); });
+      return r.json();
+    }).then(function () {
+      loadProfiles();
+    }).catch(function (err) {
+      setDiag($("#mapping-rows"), apiError("delete profile failed", err));
+    });
+  });
+
+  // ---------------------------------------------------------------- init sliders
+  setSliders(state.sliders);
+
+  // ================================================================= RUNS
+  function buildStageLeds() {
+    var container = $("#stage-leds");
+    container.innerHTML = "";
+    PIPELINE_STAGES.forEach(function (stage) {
+      var item = el("div", { class: "stage-led-item", "data-stage": stage }, [
+        el("span", { class: "led off" }),
+        el("span", { text: stage }),
+      ]);
+      container.appendChild(item);
+    });
+  }
+  buildStageLeds();
+
+  function updateStageLeds(currentStage) {
+    var seenIndex = -1;
+    PIPELINE_STAGES.forEach(function (s, i) { if (currentStage.indexOf(s) !== -1) seenIndex = i; });
+    $all(".stage-led-item").forEach(function (item, i) {
+      var led = item.querySelector(".led");
+      item.classList.remove("active", "done");
+      led.className = "led off";
+      if (i < seenIndex) { item.classList.add("done"); led.className = "led on"; }
+      else if (i === seenIndex) { item.classList.add("active"); led.className = "led blue blinker"; }
+    });
+  }
+
+  function renderVu(running) {
+    var vu = $("#vu-meter");
+    vu.innerHTML = "";
+    var n = 24;
+    var lit = running ? Math.floor(Math.random() * n) : 0;
+    for (var i = 0; i < n; i++) {
+      var cls = "seg2";
+      if (i < lit) {
+        if (i < n * 0.6) cls += " lit-g";
+        else if (i < n * 0.85) cls += " lit-b";
+        else cls += " lit-a";
+      }
+      vu.appendChild(el("div", { class: cls }));
+    }
+  }
+  renderVu(false);
+  var vuTimer = null;
+  function startVu() {
+    if (vuTimer || REDUCED_MOTION) return;
+    vuTimer = setInterval(function () { renderVu(true); }, 140);
+  }
+  function stopVu() {
+    if (vuTimer) { clearInterval(vuTimer); vuTimer = null; }
+    renderVu(false);
+  }
+
+  $("#run-btn").addEventListener("click", function () {
+    var body;
+    if (state.activeProfileName) {
+      body = { profile_name: state.activeProfileName };
+    } else {
+      var s = state.sliders;
+      body = { sliders: { capital: s.capital, risk_tolerance: s.risk_tolerance, time_horizon: s.time_horizon, drawdown_tolerance: s.drawdown_tolerance } };
+    }
+    $("#run-btn").disabled = true;
+    $("#run-error").style.display = "none";
+    fetch("/api/runs", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || ("status " + r.status)); });
+      return r.json();
+    }).then(function (data) {
+      state.selectedRunId = data.run_id;
+      showView("view-run");
+      startPolling(data.run_id);
+      loadRunsList();
+    }).catch(function (err) {
+      $("#run-btn").disabled = false;
+      $("#run-error").style.display = "block";
+      $("#run-error").textContent = apiError("failed to start run", err);
+    });
+  });
+
+  function startPolling(runId) {
+    if (state.pollTimer) clearInterval(state.pollTimer);
+    startVu();
+    poll(runId);
+    state.pollTimer = setInterval(function () { poll(runId); }, 1000);
+  }
+
+  function poll(runId) {
+    fetch("/api/runs/" + runId + "/status").then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.json();
+    }).then(function (status) {
+      $("#run-state-line").textContent = "state: " + status.state + " (" + status.stage + ")";
+      updateStageLeds(status.stage);
+      if (status.state === "error") {
+        clearInterval(state.pollTimer);
+        stopVu();
+        $("#run-btn").disabled = false;
+        $("#run-error").style.display = "block";
+        $("#run-error").textContent = "run " + runId + " failed: " + (status.error || "unknown error");
+      } else if (status.state === "done") {
+        clearInterval(state.pollTimer);
+        stopVu();
+        $("#run-btn").disabled = false;
+        loadRunsList();
+        loadReport(runId);
+      }
+    }).catch(function (err) {
+      $("#run-error").style.display = "block";
+      $("#run-error").textContent = apiError("status poll failed", err);
+    });
+  }
+
+  function loadRunsList() {
+    fetch("/api/runs").then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.json();
+    }).then(function (runs) {
+      state.runs = runs;
+      renderRunsList();
+    }).catch(function (err) {
+      setDiag($("#runs-list"), apiError("loading runs failed", err));
+    });
+  }
+
+  function renderRunsList() {
+    var container = $("#runs-list");
+    container.innerHTML = "";
+    if (!state.runs.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "no runs yet" }));
+      return;
+    }
+    state.runs.forEach(function (run) {
+      var stateColor = run.state === "done" ? "var(--green)" : run.state === "error" ? "var(--amber)" : "var(--screen-blue)";
+      var item = el("div", { class: "runs-list-item" + (run.run_id === state.selectedRunId ? " selected" : "") }, [
+        el("span", { text: run.run_id }),
+        el("span", { style: "color:" + stateColor, text: run.state }),
+        el("span", { class: "lbl dim", text: run.stage || "" }),
+        el("span", { class: "lbl dim", text: run.started_at ? run.started_at.slice(11, 19) : "" }),
+      ]);
+      item.addEventListener("click", function () {
+        state.selectedRunId = run.run_id;
+        renderRunsList();
+        if (run.state === "done") {
+          loadReport(run.run_id);
+          showView("view-funnel");
+        } else if (run.state === "running" || run.state === "queued") {
+          startPolling(run.run_id);
+          showView("view-run");
+        } else if (run.state === "error") {
+          $("#run-error").style.display = "block";
+          $("#run-error").textContent = "run " + run.run_id + " failed: " + (run.error || "unknown error");
+          showView("view-run");
+        }
+      });
+      container.appendChild(item);
+    });
+  }
+  loadRunsList();
+
+  // =============================================================== REPORT
+  var currentReport = null;
+
+  function loadReport(runId) {
+    fetch("/api/runs/" + runId + "/report").then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.json();
+    }).then(function (report) {
+      currentReport = report;
+      renderFunnelSection(report);
+      renderRobustnessSection(report);
+      renderCrossSection(report);
+      renderRegimeSection(report);
+      renderLayersSection(report);
+    }).catch(function (err) {
+      var msg = apiError("report fetch failed", err);
+      setDiag($("#funnel-content"), msg);
+      setDiag($("#robustness-content"), msg);
+      setDiag($("#cross-content"), msg);
+      setDiag($("#regime-content"), msg);
+      setDiag($("#layers-content"), msg);
+    });
+  }
+
+  function csvChip(runId, name, label) {
+    return el("a", { class: "csv-chip", href: "/api/runs/" + runId + "/artifacts/" + name, text: label || name });
+  }
+
+  // --------------------------------------------------------- 03 funnel
+  function renderFunnelSection(report) {
+    var container = $("#funnel-content");
+    container.innerHTML = "";
+    var a = report.attrition;
+    var runId = report.run_id;
+
+    var thresholds = a.thresholds;
+    var thBlock = el("div", { class: "crt", style: "margin-bottom:20px;" });
+    thBlock.appendChild(el("div", { class: "crt-title", text: "thresholds applied" }));
+    var thRows = [
+      ["max dd floor", fmtPct(thresholds.max_dd_floor)],
+      ["min oos sharpe", fmtNum(thresholds.min_oos_sharpe)],
+      ["max oos sharpe", fmtNum(thresholds.max_oos_sharpe)],
+      ["max oos/is ratio", fmtNum(thresholds.max_oos_is_ratio)],
+      ["min trades", thresholds.min_trades],
+      ["require positive is sharpe", thresholds.require_positive_is_sharpe ? "yes" : "no"],
+    ];
+    thRows.forEach(function (pair) {
+      thBlock.appendChild(el("div", { class: "crt-row" }, [
+        el("span", { class: "k", text: pair[0] }), el("span", { text: pair[1] }),
+      ]));
+    });
+    container.appendChild(thBlock);
+
+    container.appendChild(el("div", { class: "lbl", style: "margin-bottom:8px;", text: "transparency: " + report.transparency.n_configs + " configs × " + report.transparency.n_assets + " assets = " + report.transparency.n_total_backtests + " total backtests" }));
+
+    // attrition path
+    var steps = [
+      { name: "total backtests", n: a.n_total_backtests, base: a.n_total_backtests },
+      { name: "ran (not skipped)", n: a.n_run, base: a.n_total_backtests },
+      { name: "positive oos sharpe", n: a.n_positive_oos_sharpe, base: a.n_total_backtests },
+      { name: "cleared min oos sharpe", n: a.n_clears_min_oos_sharpe, base: a.n_total_backtests },
+      { name: "survived all six filters", n: a.n_survived, base: a.n_total_backtests },
+    ];
+    var viz = el("div", { class: "funnel-viz" });
+    steps.forEach(function (step) {
+      var pct = step.base ? (step.n / step.base * 100) : 0;
+      var row = el("div", { class: "funnel-step" }, [
+        el("span", { class: "fname", text: step.name }),
+        el("div", { class: "funnel-bar-track" }, [
+          el("div", { class: "funnel-bar-fill", style: "width:" + pct.toFixed(2) + "%" }),
+        ]),
+        el("span", { class: "funnel-count" }, [
+          document.createTextNode(step.n),
+          el("span", { class: "pct", text: pct.toFixed(1) + "%" }),
+        ]),
+      ]);
+      viz.appendChild(row);
+    });
+    container.appendChild(viz);
+    container.appendChild(el("div", { class: "lbl dim", text: "skipped (insufficient history): " + a.n_skipped }));
+
+    if (a.n_survived === 0) {
+      container.appendChild(el("div", { class: "diag", style: "margin-top:16px;", text: "zero survivors: every backtest failed the six-filter funnel under these thresholds. this is a valid, honest result." }));
+    }
+
+    // by category / family
+    container.appendChild(el("h3", { style: "margin-top:24px; margin-bottom:10px; font-size:14px;", text: "survival by category" }));
+    container.appendChild(buildCategoryTable(a.by_category));
+    container.appendChild(el("h3", { style: "margin-top:24px; margin-bottom:10px; font-size:14px;", text: "survival by family" }));
+    container.appendChild(buildCategoryTable(a.by_family));
+
+    // top survivors
+    container.appendChild(el("h3", { style: "margin-top:24px; margin-bottom:10px; font-size:14px;", text: "top survivors" }));
+    if (!a.top_survivors.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "no survivors to show." }));
+    } else {
+      var cols = ["config_name", "symbol", "family", "category", "oos_sharpe", "oos_max_drawdown", "oos_trade_count", "is_sharpe"];
+      var table = el("table", { class: "ztable" });
+      var thead = el("thead", {}, [el("tr", {}, cols.map(function (c) { return el("th", { text: c.replace(/_/g, " ") }); }))]);
+      var tbody = el("tbody");
+      a.top_survivors.forEach(function (row) {
+        var tr = el("tr");
+        cols.forEach(function (c) {
+          var v = row[c];
+          var cls = "num";
+          if (c === "oos_sharpe" || c === "oos_max_drawdown") {
+            cls += (v < 0 ? " neg" : " pos");
+          }
+          if (c === "config_name" || c === "symbol" || c === "family" || c === "category") cls = "";
+          var text = (typeof v === "number") ? (c.indexOf("drawdown") !== -1 ? fmtPct(v) : fmtNum(v, c === "oos_trade_count" ? 0 : 3)) : v;
+          tr.appendChild(el("td", { class: cls, text: text }));
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(thead); table.appendChild(tbody);
+      container.appendChild(table);
+    }
+
+    container.appendChild(el("div", { style: "margin-top:16px;" }, [csvChip(runId, "funnel_report.csv"), document.createTextNode(" "), csvChip(runId, "sweep_results.csv")]));
+
+    if (report.warnings && report.warnings.length) {
+      var wrap = el("div", { style: "margin-top:16px;" });
+      report.warnings.forEach(function (w) { wrap.appendChild(el("div", { class: "diag", style: "margin-bottom:6px;", text: w })); });
+      container.appendChild(wrap);
+    }
+  }
+
+  function buildCategoryTable(rows) {
+    if (!rows.length) return el("div", { class: "empty-state", text: "no data." });
+    var table = el("table", { class: "ztable" });
+    var thead = el("thead", {}, [el("tr", {}, ["name", "n total", "n survived", "survival rate", "mean oos sharpe"].map(function (h) { return el("th", { text: h }); }))]);
+    var tbody = el("tbody");
+    rows.forEach(function (row) {
+      var tr = el("tr", {}, [
+        el("td", { text: row.name }),
+        el("td", { class: "num", text: row.n_total }),
+        el("td", { class: "num", text: row.n_survived }),
+        el("td", { class: "num", text: fmtPct(row.survival_rate) }),
+        el("td", { class: "num" + (row.mean_oos_sharpe < 0 ? " neg" : " pos"), text: fmtNum(row.mean_oos_sharpe, 3) }),
+      ]);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(thead); table.appendChild(tbody);
+    return table;
+  }
+
+  // --------------------------------------------------------- 04 robustness
+  function renderRobustnessSection(report) {
+    var container = $("#robustness-content");
+    container.innerHTML = "";
+    var runId = report.run_id;
+
+    container.appendChild(el("h3", { style: "margin-bottom:10px; font-size:14px;", text: "parameter sensitivity by family" }));
+    if (!report.sensitivity.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "no sensitivity data (no backtests ran)." }));
+    } else {
+      var table = el("table", { class: "ztable" });
+      var cols = ["family", "n_configs", "n_backtests", "mean_oos_sharpe", "std_oos_sharpe", "positive_fraction"];
+      table.appendChild(el("thead", {}, [el("tr", {}, cols.map(function (c) { return el("th", { text: c.replace(/_/g, " ") }); }))]));
+      var tbody = el("tbody");
+      report.sensitivity.forEach(function (row) {
+        var lowFrac = row.positive_fraction < 0.5;
+        var tr = el("tr");
+        cols.forEach(function (c) {
+          var v = row[c];
+          var text = (typeof v === "number" && c !== "n_configs" && c !== "n_backtests") ? (c === "positive_fraction" ? fmtPct(v) : fmtNum(v, 3)) : v;
+          var cls = (c === "mean_oos_sharpe") ? "num" + (v < 0 ? " neg" : " pos") : (typeof v === "number" ? "num" : "");
+          tr.appendChild(el("td", { class: cls, text: text }));
+        });
+        if (lowFrac) {
+          tr.appendChild(el("td", {}, [el("span", { class: "pill low-frac", text: "low positive-fraction" })]));
+        } else {
+          tr.appendChild(el("td", {}));
+        }
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      var thRow = table.querySelector("thead tr");
+      thRow.appendChild(el("th", { text: "flag" }));
+      container.appendChild(table);
+    }
+    container.appendChild(el("div", { style: "margin:12px 0 24px;" }, [csvChip(runId, "sensitivity.csv")]));
+
+    container.appendChild(el("h3", { style: "margin-bottom:10px; font-size:14px;", text: "bootstrap stress test (per survivor)" }));
+    if (!report.bootstrap.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "no survivors to stress-test." }));
+    } else {
+      var cols2 = ["config_name", "symbol", "oos_sharpe", "sharpe_p5", "sharpe_p50", "sharpe_p95", "worst_case_drawdown", "dd_p5"];
+      var table2 = el("table", { class: "ztable" });
+      table2.appendChild(el("thead", {}, [el("tr", {}, cols2.concat(["verdict"]).map(function (c) { return el("th", { text: c.replace(/_/g, " ") }); }))]));
+      var tbody2 = el("tbody");
+      report.bootstrap.forEach(function (row) {
+        var tr = el("tr");
+        cols2.forEach(function (c) {
+          var v = row[c];
+          var isPctCol = c.indexOf("drawdown") !== -1 || c.indexOf("dd_p5") !== -1;
+          var text = (typeof v === "number") ? (isPctCol ? fmtPct(v) : fmtNum(v, 3)) : v;
+          var cls = (typeof v === "number") ? "num" + (isPctCol || c.indexOf("sharpe") !== -1 ? (v < 0 ? " neg" : " pos") : "") : "";
+          tr.appendChild(el("td", { class: cls, text: text }));
+        });
+        var verdictTd = el("td");
+        verdictTd.appendChild(el("span", { class: "pill " + row.verdict, text: row.verdict }));
+        tr.appendChild(verdictTd);
+        tbody2.appendChild(tr);
+      });
+      table2.appendChild(tbody2);
+      container.appendChild(table2);
+    }
+    container.appendChild(el("div", { style: "margin-top:12px;" }, [csvChip(runId, "bootstrap.csv")]));
+  }
+
+  // --------------------------------------------------------- 05 cross-sectional
+  function renderCrossSection(report) {
+    var container = $("#cross-content");
+    container.innerHTML = "";
+    var runId = report.run_id;
+    var cs = report.cross_sectional;
+
+    container.appendChild(el("div", { class: "diag", style: "margin-bottom:16px; font-weight:600;", text: "research only — holds shorts, not tradeable under your constraints." }));
+
+    if (!cs.records.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "no cross-sectional results." }));
+    } else {
+      var cols = ["lookback", "is_sharpe", "oos_sharpe", "oos_max_drawdown", "n_rebalances"];
+      var hasSingle = cs.records[0].single_asset_mean_oos_sharpe !== undefined;
+      if (hasSingle) cols.push("single_asset_mean_oos_sharpe");
+      var table = el("table", { class: "ztable" });
+      table.appendChild(el("thead", {}, [el("tr", {}, cols.map(function (c) { return el("th", { text: c.replace(/_/g, " ") }); }))]));
+      var tbody = el("tbody");
+      cs.records.forEach(function (row) {
+        var tr = el("tr");
+        cols.forEach(function (c) {
+          var v = row[c];
+          var isPct = c === "oos_max_drawdown";
+          var text = (typeof v === "number") ? (isPct ? fmtPct(v) : fmtNum(v, c === "n_rebalances" ? 0 : 3)) : (v === null ? "n/a" : v);
+          var cls = (typeof v === "number") ? "num" + ((c.indexOf("sharpe") !== -1 || isPct) ? (v < 0 ? " neg" : " pos") : "") : "";
+          tr.appendChild(el("td", { class: cls, text: text }));
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      container.appendChild(table);
+    }
+
+    container.appendChild(el("div", { class: "crt", style: "margin-top:16px;" }, [
+      el("div", { class: "crt-title", text: "verdict" }),
+      el("div", { style: "font-size:11px; color:var(--amber); line-height:1.6;", text: cs.verdict }),
+    ]));
+
+    container.appendChild(el("div", { style: "margin-top:16px;" }, [csvChip(runId, "cross_sectional.csv")]));
+  }
+
+  // --------------------------------------------------------- 06 regime
+  function renderRegimeSection(report) {
+    var container = $("#regime-content");
+    container.innerHTML = "";
+    var runId = report.run_id;
+    var regime = report.regime;
+
+    container.appendChild(el("h3", { style: "margin-bottom:10px; font-size:14px;", text: "detector comparison" }));
+    if (!regime.comparison.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "regime detection skipped (proxy symbol not in universe)." }));
+    } else {
+      var cols = ["detector", "fraction_trending", "n_switches", "mean_spell_length"];
+      var table = el("table", { class: "ztable" });
+      table.appendChild(el("thead", {}, [el("tr", {}, cols.map(function (c) { return el("th", { text: c.replace(/_/g, " ") }); }))]));
+      var tbody = el("tbody");
+      regime.comparison.forEach(function (row) {
+        var tr = el("tr");
+        cols.forEach(function (c) {
+          var v = row[c];
+          var text = (typeof v === "number") ? (c === "fraction_trending" ? fmtPct(v) : fmtNum(v, c === "n_switches" ? 0 : 2)) : v;
+          tr.appendChild(el("td", { class: typeof v === "number" ? "num" : "", text: text }));
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      container.appendChild(table);
+    }
+
+    container.appendChild(el("h3", { style: "margin:24px 0 10px; font-size:14px;", text: "agreement matrix" }));
+    var names = Object.keys(regime.agreement_matrix || {});
+    if (!names.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "no agreement matrix available." }));
+    } else {
+      var wrapTable = el("table", { class: "ztable" });
+      var headRow = el("tr", {}, [el("th", { text: "" })].concat(names.map(function (n) { return el("th", { text: n }); })));
+      wrapTable.appendChild(el("thead", {}, [headRow]));
+      var tbody2 = el("tbody");
+      names.forEach(function (rowName) {
+        var tr = el("tr", {}, [el("td", { text: rowName })]);
+        names.forEach(function (colName) {
+          var v = regime.agreement_matrix[rowName][colName];
+          var intensity = Math.max(0, Math.min(1, v));
+          var td = el("td");
+          td.appendChild(el("div", {
+            class: "matrix-cell",
+            style: "background: rgba(107,182,245," + (0.08 + intensity * 0.5).toFixed(2) + ");",
+            text: fmtNum(v, 2)
+          }));
+          tr.appendChild(td);
+        });
+        tbody2.appendChild(tr);
+      });
+      wrapTable.appendChild(tbody2);
+      container.appendChild(wrapTable);
+    }
+
+    container.appendChild(el("h3", { style: "margin:24px 0 10px; font-size:14px;", text: "regime-conditioned performance (survivors)" }));
+    if (!regime.performance.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "no regime-conditioned performance rows (no survivors, or regime detection skipped)." }));
+    } else {
+      var cols3 = ["name", "regime", "sharpe", "max_drawdown", "n_days", "total_return"];
+      var table3 = el("table", { class: "ztable" });
+      table3.appendChild(el("thead", {}, [el("tr", {}, cols3.map(function (c) { return el("th", { text: c.replace(/_/g, " ") }); }))]));
+      var tbody3 = el("tbody");
+      regime.performance.forEach(function (row) {
+        var tr = el("tr");
+        cols3.forEach(function (c) {
+          var v = row[c];
+          var isPct = c === "max_drawdown" || c === "total_return";
+          var text = (typeof v === "number") ? (isPct ? fmtPct(v) : fmtNum(v, c === "n_days" ? 0 : 3)) : v;
+          var cls = (typeof v === "number") ? "num" + ((c === "sharpe" || isPct) ? (v < 0 ? " neg" : " pos") : "") : "";
+          tr.appendChild(el("td", { class: cls, text: text }));
+        });
+        tbody3.appendChild(tr);
+      });
+      table3.appendChild(tbody3);
+      container.appendChild(table3);
+    }
+
+    container.appendChild(el("div", { style: "margin-top:16px;" }, [csvChip(runId, "regime_performance.csv")]));
+  }
+
+  // --------------------------------------------------------- 07 layers + portfolio
+  function renderLayersSection(report) {
+    var container = $("#layers-content");
+    container.innerHTML = "";
+    var runId = report.run_id;
+
+    container.appendChild(el("h3", { style: "margin-bottom:10px; font-size:14px;", text: "layer attribution (top survivor)" }));
+    if (!report.layer_attribution.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "no layer attribution (no survivors)." }));
+    } else {
+      var cols = ["step", "sharpe", "max_drawdown", "win_rate", "cagr", "trade_count", "delta_sharpe", "delta_max_drawdown", "delta_win_rate", "delta_cagr", "delta_trade_count"];
+      var table = el("table", { class: "ztable" });
+      table.appendChild(el("thead", {}, [el("tr", {}, cols.map(function (c) { return el("th", { text: c.replace(/_/g, " ") }); }))]));
+      var tbody = el("tbody");
+      report.layer_attribution.forEach(function (row) {
+        var tr = el("tr");
+        cols.forEach(function (c) {
+          var v = row[c];
+          var isPct = c.indexOf("drawdown") !== -1 || c.indexOf("win_rate") !== -1 || c.indexOf("cagr") !== -1;
+          var text = (typeof v === "number") ? (isPct ? fmtPct(v) : fmtNum(v, c.indexOf("trade_count") !== -1 ? 0 : 3)) : v;
+          var cls = c === "step" ? "" : "num" + ((c.indexOf("sharpe") !== -1 || isPct) && typeof v === "number" ? (v < 0 ? " neg" : " pos") : "");
+          tr.appendChild(el("td", { class: cls, text: text }));
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      container.appendChild(table);
+    }
+    container.appendChild(el("div", { style: "margin:12px 0 24px;" }, [csvChip(runId, "layer_attribution.csv")]));
+
+    container.appendChild(el("h3", { style: "margin-bottom:10px; font-size:14px;", text: "correlation / redundancy" }));
+    var corrNames = Object.keys(report.correlation.matrix || {});
+    if (!corrNames.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "no correlation matrix (fewer than 2 survivors)." }));
+    } else {
+      var ctable = el("table", { class: "ztable" });
+      var headRow = el("tr", {}, [el("th", { text: "" })].concat(corrNames.map(function (n) { return el("th", { text: n }); })));
+      ctable.appendChild(el("thead", {}, [headRow]));
+      var cbody = el("tbody");
+      corrNames.forEach(function (rowName) {
+        var tr = el("tr", {}, [el("td", { text: rowName })]);
+        corrNames.forEach(function (colName) {
+          var v = report.correlation.matrix[rowName][colName];
+          var text = (v === null || v === undefined) ? "n/a" : fmtNum(v, 2);
+          var intensity = (v === null || v === undefined) ? 0 : Math.max(0, Math.min(1, Math.abs(v)));
+          var td = el("td");
+          td.appendChild(el("div", {
+            class: "matrix-cell",
+            style: "background: rgba(107,182,245," + (0.08 + intensity * 0.5).toFixed(2) + ");",
+            text: text
+          }));
+          tr.appendChild(td);
+        });
+        cbody.appendChild(tr);
+      });
+      ctable.appendChild(cbody);
+      container.appendChild(ctable);
+    }
+
+    container.appendChild(el("h3", { style: "margin:16px 0 10px; font-size:14px;", text: "redundancy flags" }));
+    if (!report.correlation.redundancy_flags.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "no redundant pairs (correlation ≥ 0.85) found." }));
+    } else {
+      var rtable = el("table", { class: "ztable" });
+      rtable.appendChild(el("thead", {}, [el("tr", {}, ["a", "b", "corr"].map(function (h) { return el("th", { text: h }); }))]));
+      var rbody = el("tbody");
+      report.correlation.redundancy_flags.forEach(function (row) {
+        rbody.appendChild(el("tr", {}, [
+          el("td", { text: row.a }),
+          el("td", { text: row.b }),
+          el("td", { class: "num", text: fmtNum(row.corr, 3) }),
+        ]));
+      });
+      rtable.appendChild(rbody);
+      container.appendChild(rtable);
+      container.appendChild(el("div", { class: "diag", style: "margin-top:10px;", text: "these are the same trade — running both adds cost without real diversification." }));
+    }
+
+    container.appendChild(el("div", { style: "margin-top:16px;" }, [csvChip(runId, "correlation_matrix.csv")]));
+  }
+
+})();
+</script>
 </body>
 </html>

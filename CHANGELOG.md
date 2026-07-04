@@ -107,6 +107,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   against path traversal), live `GET /api/mapping/preview` for slider
   feedback, and a `FUNNEL_FAKE_DATA=1` synthetic source for offline UI dev.
 
+- M8: catfu single-file SPA (`web/index.html`) — zero-build instrument-panel
+  UI per AESTHETIC_CONTRACT.md: profile deck hero (four keyboard-operable
+  faders with LCD readouts, preset snap, live mapping readout from
+  `/api/mapping/preview`, intraday warning), run console with per-stage LED
+  progress, and report views for funnel attrition (direct-labeled stepped
+  bars + exact thresholds applied), robustness (sensitivity + solid/fragile
+  bootstrap verdicts), cross-sectional (research-only banner), regime
+  (single-hue agreement matrix), layer attribution, and correlation
+  redundancy — every section with CSV artifact downloads, honest zero-state
+  handling, dark/light rocker theming, and WCAG AA-verified contrast.
+- M8: `.claude/launch.json` dev-preview config (uvicorn on port 8731 with
+  synthetic data via `FUNNEL_FAKE_DATA=1`).
+
 ### Changed
 
 - Design language switched from "Cyberdeck" to "catfu" (cassette-futurism):

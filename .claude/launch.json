@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "funnel",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["FUNNEL_FAKE_DATA=1", "FUNNEL_RUNS_DIR=/tmp/funnel-dev-runs", "uv", "run", "--project", "engine", "uvicorn", "--factory", "funnel.api.app:create_app", "--port", "8731"],
+      "port": 8731
+    }
+  ]
+}
