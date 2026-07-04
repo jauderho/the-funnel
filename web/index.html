@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Funnel</title>
+</head>
+<body>
+  <h1>The Funnel</h1>
+  <p>UI arrives in M8.</p>
+  <p>API status: <span id="status">checking...</span></p>
+  <script>
+    fetch("/api/health")
+      .then((res) => res.json())
+      .then((data) => {
+        document.getElementById("status").textContent =
+          `${data.status} (v${data.version})`;
+      })
+      .catch(() => {
+        document.getElementById("status").textContent = "unreachable";
+      });
+  </script>
+</body>
+</html>

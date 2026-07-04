@@ -1,16 +1,39 @@
-# ghafiles
+# The Funnel
 
-This contains baseline GitHub Actions that may be useful for any new project. 
+The Funnel is a strategy screener and backtester for a single power-user, built
+around a "test everything, then validate hard" discipline: sweep dozens of
+strategies across parameter grids and a broad asset universe, then kill most of
+them through walk-forward validation and a six-filter survival funnel, backed by
+robustness checks (parameter sensitivity, bootstrap stress tests) so that only
+genuinely durable edges are reported — attrition, deep drawdowns, and fragile
+survivors are surfaced by design, never hidden.
 
-- Adhere to least privilege principles for workflow permissions
-- Use of commit hashes for pinning GitHub Actions dependencies
-- Use of Dependabot to update commit hashes as necessary
-- Use of [andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills/blob/main/CLAUDE.md) as CLAUDE.md starting point
-- Use of OpenSSF's [Security Scorecard](https://github.com/ossf/scorecard) (SCORECARD_TOKEN setup required)
-- Use of Step Security's [Harden Runner](https://github.com/step-security/harden-runner)
-- Codespell
-- Super-Linter
-- Semgrep CE
-- (optional) Sync commits to GitLab (GITLAB_TOKEN setup required)
-  - Create PAT on GitLab with API, repo read and repo write permissions
-  - Add PAT into GitHub repo as a secret named GITLAB_TOKEN
+## Quickstart
+
+**Local dev:**
+
+```bash
+cd engine
+uv sync
+uv run uvicorn funnel.api.app:create_app --factory --reload
+```
+
+**Docker:**
+
+```bash
+docker compose up
+```
+
+Either way, the app serves the API at `/api/*` and the frontend at `/`.
+
+## Repo layout
+
+```
+engine/       Python 3.14 / FastAPI backend (package: funnel)
+web/          Cyberdeck SPA frontend (single-file, zero-build)
+docs/         Architecture notes
+runs/         Per-run pipeline artifacts (gitignored)
+```
+
+See [`PLAN.md`](PLAN.md) for the full implementation plan and
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for an architecture overview.

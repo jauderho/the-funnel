@@ -1,0 +1,9 @@
+services:
+  funnel:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./runs:/app/runs
+    environment:
+      FUNNEL_RUNS_DIR: /app/runs
