@@ -8,6 +8,16 @@ robustness checks (parameter sensitivity, bootstrap stress tests) so that only
 genuinely durable edges are reported — attrition, deep drawdowns, and fragile
 survivors are surfaced by design, never hidden.
 
+## Honesty by design
+
+Funnel thresholds live in one frozen config consumed by both the engine and the
+report, so the report always states the thresholds actually used. Attrition counts
+come from the raw sweep (all configs × assets), not a curated subset — a weak
+strategy family's negative mean OOS Sharpe shows up in `sensitivity.csv` right next
+to the survivors, never filtered out. Solid/fragile bootstrap flags and
+regime-dependence are always rendered, never filterable-away in the UI. A
+zero-survivor run is a valid, complete result, not an error.
+
 ## Quickstart
 
 **Local dev:**
@@ -17,6 +27,17 @@ cd engine
 uv sync
 uv run uvicorn funnel.api.app:create_app --factory --reload
 ```
+
+**Local dev, no network (synthetic data):**
+
+```bash
+cd engine
+FUNNEL_FAKE_DATA=1 FUNNEL_RUNS_DIR=/tmp/funnel-dev-runs \
+  uv run uvicorn funnel.api.app:create_app --factory --port 8731
+```
+
+`FUNNEL_FAKE_DATA=1` swaps in a deterministic synthetic data source — no yfinance
+calls, no network required. This is what `.claude/launch.json` uses for preview/dev.
 
 **Docker:**
 
@@ -30,10 +51,11 @@ Either way, the app serves the API at `/api/*` and the frontend at `/`.
 
 ```
 engine/       Python 3.14 / FastAPI backend (package: funnel)
-web/          Cyberdeck SPA frontend (single-file, zero-build)
+web/          catfu SPA frontend (single-file, zero-build)
 docs/         Architecture notes
 runs/         Per-run pipeline artifacts (gitignored)
 ```
 
-See [`PLAN.md`](PLAN.md) for the full implementation plan and
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for an architecture overview.
+See [`PLAN.md`](PLAN.md) for the full implementation plan,
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for an architecture overview, and
+[`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md) for known gaps.

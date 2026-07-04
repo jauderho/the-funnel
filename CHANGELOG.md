@@ -120,6 +120,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - M8: `.claude/launch.json` dev-preview config (uvicorn on port 8731 with
   synthetic data via `FUNNEL_FAKE_DATA=1`).
 
+- M9: Docs — `docs/ARCHITECTURE.md` (module map, 12-stage pipeline, artifact
+  and endpoint inventory, env vars), `docs/OPEN_ITEMS.md` (honest gaps:
+  real-data path untested in the network-blocked dev env, Docker build
+  unverified without a daemon, options overlay deferred to v2, intraday
+  unsupported in v1), and a README refresh with the fake-data dev mode.
+- M9: `.dockerignore` now excludes `data/` (local cache/profiles) from
+  image builds.
+
 ### Changed
 
 - Design language switched from "Cyberdeck" to "catfu" (cassette-futurism):
