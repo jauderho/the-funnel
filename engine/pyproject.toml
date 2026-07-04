@@ -12,6 +12,7 @@ dependencies = [
   "fastapi",
   "uvicorn",
   "msgspec",
+  "pyarrow>=24.0.0",
 ]
 
 [dependency-groups]
