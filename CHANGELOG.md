@@ -86,6 +86,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   correlation matrix with a minimum-overlap guard and redundancy flags for
   highly correlated pairs → `correlation_matrix.csv`.
 
+- M7: Risk/reward profiles (`funnel.profiles`) — four validated 0–100 sliders
+  with the hybrid mapping: drawdown-tolerance and risk-tolerance hard-map
+  onto funnel thresholds (max-DD floor -0.15…-0.50, Sharpe ceiling 2.0…4.0,
+  min trades 40…20, all linear and monotone), capital and time-horizon
+  soft-re-rank only (crypto niche penalty, turnover preference); per-slider
+  `explain_mapping` for UI display; two presets ("Retirement Core",
+  "Swing Sandbox") plus atomic JSON profile persistence; profile-aware
+  screener with hard-constraint flags (research-only long/short excluded
+  from the tradeable track) and an intraday-unsupported warning.
+- M7.5: Pipeline orchestration (`funnel.pipeline`) — one call runs
+  data → profile thresholds → sweep → attrition → sensitivity → bootstrap →
+  cross-sectional → regime → layer attribution → correlation → screen,
+  writing all artifacts (seven CSVs + `layer_attribution.csv` +
+  `report.json`) under `runs/<id>/`; zero-survivor runs complete honestly
+  with warnings recorded, never swallowed.
+- M7.5: API — profiles CRUD, `POST /api/runs` (serial background jobs with
+  per-stage status mirrored to `status.json`), status/report/artifact
+  endpoints (artifact-name whitelist and strict run-id validation guarding
+  against path traversal), live `GET /api/mapping/preview` for slider
+  feedback, and a `FUNNEL_FAKE_DATA=1` synthetic source for offline UI dev.
+
 ### Changed
 
 - Design language switched from "Cyberdeck" to "catfu" (cassette-futurism):

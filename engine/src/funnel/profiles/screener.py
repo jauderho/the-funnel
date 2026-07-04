@@ -94,7 +94,7 @@ def screen(
     survives = working.apply(lambda row: _passes_six_filters(row, thresholds), axis=1)
     survivors = working.loc[survives].copy()
 
-    is_cross_sectional = survivors["family"].map(_is_cross_sectional)
+    is_cross_sectional = survivors["family"].map(_is_cross_sectional).astype(bool)
     survivors["tradeable"] = ~is_cross_sectional
     survivors["long_only_note"] = LONG_ONLY_NOTE
 
