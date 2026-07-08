@@ -13,5 +13,5 @@ services:
     # whitelisting fc.yahoo.com in your DNS blocker; as a stopgap, uncomment
     # the pin below (IP from `dig +short fc.yahoo.com @1.1.1.1` — re-check
     # it if fetches break again, Yahoo rotates IPs).
-    # extra_hosts:
-    #   - "fc.yahoo.com:69.147.88.7"
+    extra_hosts:
+      - "fc.yahoo.com:69.147.88.7"
