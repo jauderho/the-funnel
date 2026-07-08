@@ -146,6 +146,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   defined-risk enforcement (`UndefinedRiskError` — unbounded-loss specs are
   unconstructible). Hand-computed roll fixtures, bounded-loss proofs for
   all four structures, look-ahead guard, and cost-monotonicity tests.
+- V2-M3: Overlay grid + validation (`funnel.options.grid`, `.sweep`) —
+  36-config grid across the four structures; walk-forward scoring of
+  overlay AND buy-and-hold returns on identical windows (v1's 5-window
+  70/30 stitched-OOS discipline), bootstrap stress with solid/fragile
+  verdicts, warmup-aware skip handling (valid-row, not raw-row, window
+  counting), and `overlay_results.csv` where every row carries
+  `model_priced=True` and the labeled `mean_model_prob_itm` column —
+  upside forgone and negative vs-hold Sharpe are always present, never
+  filtered.
 
 ### Changed
 
