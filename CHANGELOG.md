@@ -127,6 +127,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   unsupported in v1), and a README refresh with the fake-data dev mode.
 - M9: `.dockerignore` now excludes `data/` (local cache/profiles) from
   image builds.
+- V2-M1: Options pricing core (`funnel.options.pricing`) — Black-Scholes-
+  Merton price/delta/risk-neutral P(ITM at expiry) with documented q=0
+  total-return-frame ground rules (model prices, never market prices;
+  "assignment probability" is always the labeled model P(ITM) proxy),
+  closed-form strike-for-delta via Acklam's inverse-normal approximation,
+  and a strictly causal realized-vol proxy (`synthetic_iv`) with a
+  configurable volatility-risk-premium multiplier and floor. Golden-value,
+  put-call-parity, monotonicity, edge-case, round-trip, and
+  truncation-invariance tests.
 
 ### Changed
 
