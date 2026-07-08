@@ -170,6 +170,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   upside forgone, bootstrap verdict pills) with sort controls, honest
   empty/zero states, per-structure summary strip, and CSV download;
   run-type routing via report.run_type with a localStorage registry.
+- V2-M6: v2 docs (architecture module map, overlay run type, endpoints;
+  README feature paragraph; OPEN_ITEMS model-risk entry) and a watched
+  real-data overlay run in the rebuilt container (AAPL+MSFT: 72 backtests,
+  51% negative vs-hold, 62/72 fragile — honest results confirmed).
+- V2-M6: Grid fix from the e2e honesty check — `build_overlay_grid()` now
+  includes 10 hold-to-expiry (`roll_at_dte=0`) configs (46 total) so the
+  assignment/settlement path is actually exercised in production runs
+  (previously every config rolled 5 days before expiry, making
+  `n_assignments=0` structural and misleading); sweep-level test proves
+  nonzero assignments. OVERLAYS UI gained a one-line clarification that
+  Δ vs hold compares stitched walk-forward OOS Sharpe, not full-period
+  total return.
 
 ### Changed
 

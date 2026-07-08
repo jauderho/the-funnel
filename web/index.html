@@ -1797,6 +1797,10 @@ footer {
       class: "lbl", style: "margin-bottom:8px;",
       text: "transparency: " + report.transparency.n_configs + " configs × " + report.transparency.n_symbols + " symbols = " + report.transparency.n_total + " overlay backtests"
     }));
+    container.appendChild(el("div", {
+      class: "lbl dim", style: "margin-bottom:8px;",
+      text: "Δ vs hold compares stitched walk-forward oos sharpe (same 5-window discipline as the strategy funnel), not full-period buy-and-hold total return"
+    }));
 
     if (report.warnings && report.warnings.length) {
       var wwrap = el("div", { style: "margin-bottom:16px;" });

@@ -8,6 +8,13 @@ robustness checks (parameter sensitivity, bootstrap stress tests) so that only
 genuinely durable edges are reported — attrition, deep drawdowns, and fragile
 survivors are surfaced by design, never hidden.
 
+v2 adds an options overlay module (covered calls, cash-secured puts, vertical
+spreads, LEAPs) on top of any core holding: walk-forward-validated yield vs.
+assignment probability vs. upside forgone, always shown against plain
+buy-and-hold. Every option price is a synthetic Black-Scholes model price (no
+real historical option chains are available from free sources), so treat the
+yields and assignment rates as model estimates, not market-observed quotes.
+
 ## Honesty by design
 
 Funnel thresholds live in one frozen config consumed by both the engine and the

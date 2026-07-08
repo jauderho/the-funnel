@@ -72,6 +72,7 @@ def test_grid_names_are_unique() -> None:
 def test_grid_total_in_expected_range() -> None:
     configs = build_overlay_grid()
     assert 30 <= len(configs) <= 60
+    assert len(configs) == 46
 
 
 def test_grid_per_structure_counts_match_summary() -> None:
@@ -79,10 +80,10 @@ def test_grid_per_structure_counts_match_summary() -> None:
     summary = summarize_overlay_grid(configs)
 
     assert summary == {
-        "cash_secured_put": 12,
-        "covered_call": 12,
+        "cash_secured_put": 16,
+        "covered_call": 16,
         "leaps": 4,
-        "vertical_spread": 8,
+        "vertical_spread": 10,
     }
 
     from collections import Counter
@@ -100,6 +101,40 @@ def test_grid_covers_all_four_structures() -> None:
         OverlayStructure.VERTICAL_SPREAD,
         OverlayStructure.LEAPS,
     }
+
+
+def test_grid_includes_hold_to_expiry_configs_where_assignment_is_meaningful() -> None:
+    """Every other config's default roll_at_dte=5 makes simulate_overlay's
+    settlement/assignment path structurally unreachable (the scheduled-roll
+    check always fires first). covered_call, cash_secured_put, and
+    vertical_spread must each ship at least one roll_at_dte=0
+    (hold-to-expiry) variant so a real report can observe n_assignments > 0;
+    LEAPS has no short leg, so assignment does not apply there."""
+    configs = build_overlay_grid()
+    hold_to_expiry = [c for c in configs if c.spec.roll_at_dte == 0]
+
+    hold_structures = {c.spec.structure for c in hold_to_expiry}
+    assert hold_structures == {
+        OverlayStructure.COVERED_CALL,
+        OverlayStructure.CASH_SECURED_PUT,
+        OverlayStructure.VERTICAL_SPREAD,
+    }
+    assert OverlayStructure.LEAPS not in hold_structures
+
+    from collections import Counter
+
+    counts = Counter(c.spec.structure.value for c in hold_to_expiry)
+    assert counts["covered_call"] == 4
+    assert counts["cash_secured_put"] == 4
+    assert counts["vertical_spread"] == 2
+
+    # The avoid=True + hold-to-expiry combination (P(ITM)-triggered rolls
+    # only, otherwise runs to settlement) must be present for both
+    # covered_call and cash_secured_put.
+    avoid_hold = [c for c in hold_to_expiry if c.spec.avoid_assignment]
+    avoid_hold_structures = {c.spec.structure for c in avoid_hold}
+    assert OverlayStructure.COVERED_CALL in avoid_hold_structures
+    assert OverlayStructure.CASH_SECURED_PUT in avoid_hold_structures
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +350,41 @@ def test_covered_call_on_rising_fixture_shows_capped_upside(
     assert np.isfinite(row["oos_sharpe_vs_hold"])
     assert row["upside_forgone"] > 0.0
     assert row["oos_sharpe_vs_hold"] < 0.0
+
+
+def test_hold_to_expiry_covered_call_reports_assignments(
+    wf: WalkForwardConfig,
+    vol_config: VolProxyConfig,
+    costs: OverlayCosts,
+    thresholds: FunnelThresholds,
+) -> None:
+    """Regression test for the post-acceptance finding: every non-hold config
+    in the grid rolls at roll_at_dte=5, before simulate_overlay's scheduled-
+    roll check can ever reach true expiry, so _check_assignment is
+    structurally unreachable and a production run would always report
+    n_assignments=0 regardless of how many years of data it covers. A
+    hold-to-expiry (roll_at_dte=0) covered call, run on a strongly and
+    steadily rising fixture long enough for several 21-DTE expiries, must
+    report n_assignments > 0 — proving the sweep's production path can
+    actually surface assignment events now that the grid includes
+    roll_at_dte=0 variants."""
+    hold_to_expiry_configs = [
+        c for c in build_overlay_grid() if c.name == "covered_call_d25_dte21_roll0_noavoid_hold"
+    ]
+    assert len(hold_to_expiry_configs) == 1
+    config = hold_to_expiry_configs[0]
+    assert config.spec.roll_at_dte == 0
+
+    rising = {"RISING": _make_rising_df(700, seed=5, daily_mult=1.0015)}
+
+    df = run_overlay_sweep(
+        rising, [config], None, wf, vol_config, costs, 0.03, thresholds, n_bootstrap=25, seed=42
+    )
+
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert not row["skipped"]
+    assert row["n_assignments"] > 0
 
 
 def test_bootstrap_columns_deterministic_under_fixed_seed(

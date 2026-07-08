@@ -26,8 +26,9 @@ The Funnel has two components:
 | `layers/` | `sizing.py` (vol targeting, ATR sizing, caps), `combine.py` (signal blending), `router.py` (regime→strategy routing), `stack.py` (per-layer on/off attribution). |
 | `portfolio/` | `correlation.py` — cross-strategy correlation matrix + redundancy flags. |
 | `profiles/` | `models.py` (`Profile`, `SliderValues`), `mapping.py` (slider→threshold + ranking-weight mapping, explicit and logged), `store.py` (JSON on disk), `screener.py` (profile-driven filtering incl. hard-constraint exclusions). |
+| `options/` | Options overlay module (v2, PRD §11.3). `pricing.py` (BSM price/delta/P(ITM), causal realized-vol proxy + vol-risk-premium knob), `overlays.py` (covered call, cash-secured put, vertical spread, LEAPs structures on a daily roll grid; defined-risk validation), `grid.py` (`build_overlay_grid()` — structure × delta target × DTE × roll-rule config grid), `sweep.py` (overlay config × symbol sweep, walk-forward + bootstrap scoring vs. buy-and-hold → `overlay_results.csv`). |
 | `reports/` | `attrition.py` — six-filter funnel attrition report (by category, by family). |
-| `pipeline.py` | Orchestrates every stage above into one run; writes all artifacts + `report.json`. Pure glue — no scoring/funnel/robustness logic of its own. |
+| `pipeline.py` | Orchestrates every stage above into one run; writes all artifacts + `report.json`. Pure glue — no scoring/funnel/robustness logic of its own. Also holds `run_overlay_pipeline`, the lighter sibling run type for options-overlay requests. |
 | `api/` | `app.py` (FastAPI app factory + routes), `jobs.py` (background job registry), `testing.py` (`SyntheticSource`, network-free fake data for dev/tests). |
 
 ## Pipeline stage order
@@ -49,6 +50,22 @@ The Funnel has two components:
 
 Every stage announces itself via a `progress` callback so the API's job registry can surface live status. A stage with nothing to report (e.g. zero survivors, missing regime proxy) records a warning and continues — a zero-survivor run is a valid, complete result, never suppressed.
 
+### Overlay run type (`run_overlay_pipeline`, `pipeline.py`)
+
+A separate, lighter run type for options-overlay requests (v2, PRD §11.3): fetches
+only the caller-requested symbols (not the whole universe), runs 2 stages, and
+writes its own `report.json` (`run_type: "overlay"`) alongside `overlay_results.csv`.
+
+1. **data** — fetch only `config.symbols` via the injected `DataSource`, filter by
+   min-history. Zero eligible symbols completes honestly with an empty sweep and a
+   warning, exactly as a zero-survivor strategy run does.
+2. **sweep** — every `OverlayConfig` (`build_overlay_grid()`, or an override) ×
+   eligible symbol through `simulate_overlay`, walk-forward-scored against the
+   underlying's buy-and-hold on identical windows, then bootstrap-stressed. Writes
+   `overlay_results.csv`, then a `report.json` carrying `transparency` counts,
+   the always-present `model_risk_caveat`, `grid_summary` (per-structure config
+   counts), and every overlay row (survived or not).
+
 ## Artifacts (`runs/<run_id>/`, from `ARTIFACT_NAMES` in `pipeline.py`)
 
 | File | Contents |
@@ -61,7 +78,8 @@ Every stage announces itself via a `progress` callback so the API's job registry
 | `regime_performance.csv` | Regime-conditioned performance breakdown for survivors. |
 | `layer_attribution.csv` | Per-layer (sizing/combine/routing) marginal attribution for the top survivor. |
 | `correlation_matrix.csv` | Cross-strategy correlation matrix + redundancy flags among top survivors. |
-| `report.json` | Everything above assembled into one JSON document, plus thresholds applied, mapping explanation, transparency counts, and warnings. |
+| `overlay_results.csv` | Options-overlay run only: one row per (overlay config, symbol) — overlay vs. buy-and-hold Sharpe/drawdown, premium yield, `mean_model_prob_itm`, assignment/roll counts, upside forgone, bootstrap verdict; skipped rows flagged, never dropped. |
+| `report.json` | Everything above assembled into one JSON document, plus thresholds applied, mapping explanation, transparency counts, and warnings. For an overlay run, a separate, smaller `report.json` (`run_type: "overlay"`) with `transparency` counts, `model_risk_caveat`, `grid_summary`, and `overlay_rows`. |
 
 All artifacts are directly downloadable from the API; the frontend polls run status, then renders from `report.json` and fetches individual CSVs on demand.
 
@@ -74,6 +92,8 @@ All artifacts are directly downloadable from the API; the frontend polls run sta
 | POST | `/api/profiles` | Save a named profile (sliders). |
 | DELETE | `/api/profiles/{name}` | Delete a profile (presets are protected). |
 | POST | `/api/runs` | Start a pipeline run for a profile name or ad-hoc sliders; returns `run_id`. |
+| POST | `/api/overlays` | Start an options-overlay run for a list of underlying symbols (capped, validated against the asset universe); returns `run_id`. |
+| GET | `/api/overlays/universe` | List symbols eligible for an overlay run (symbol + asset class). |
 | GET | `/api/runs` | List all known runs and their status. |
 | GET | `/api/runs/{run_id}/status` | Poll a run's status (queued/running/done/error). |
 | GET | `/api/runs/{run_id}/report` | Fetch the assembled `report.json` for a finished run. |
