@@ -136,6 +136,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   configurable volatility-risk-premium multiplier and floor. Golden-value,
   put-call-parity, monotonicity, edge-case, round-trip, and
   truncation-invariance tests.
+- V2-M2: Overlay roll engine (`funnel.options.overlays`) — daily-grid
+  simulation of covered calls, cash-secured puts, credit vertical spreads,
+  and LEAPS with per-cycle capital-base normalization (documented per
+  structure) so overlay Sharpe/drawdown are comparable to buy-and-hold;
+  DTE/delta/%OTM strike selection, scheduled and model-P(ITM)-triggered
+  assignment-avoidance rolls, expiry settlement with assignment events,
+  commission + synthetic-spread costs on every open/close, and structural
+  defined-risk enforcement (`UndefinedRiskError` — unbounded-loss specs are
+  unconstructible). Hand-computed roll fixtures, bounded-loss proofs for
+  all four structures, look-ahead guard, and cost-monotonicity tests.
 
 ### Changed
 
