@@ -106,3 +106,45 @@ Each milestone: implementor works from a written task spec (scope, interfaces, a
 ## Success criteria (from PRD §14, used as acceptance)
 
 Single-session slider→screen→full-pipeline run; per-layer and per-regime attribution in the report; full attrition funnel with top-survivors table; no screened output violating hard constraints (no shorts on tradeable track, no uncapped-loss structures); correlation/redundancy surfaced; negative results visible by construction.
+
+---
+
+# v2 — Options Overlay Module (PRD §11.3)
+
+v1 shipped and was verified end-to-end on real data (4650 backtests/run, honest attrition). v2 adds the deferred options overlay module. Same model contract: orchestrator delegates all implementation; Fable is the implementor ceiling.
+
+## Decisions (user-confirmed 2026-07-08)
+
+1. **Pricing: Black-Scholes synthetic.** Historical option chains are unavailable from free sources, so options are model-priced from the underlying's EOD series + a causal realized-vol proxy with a configurable vol-risk-premium multiplier. Model risk is a first-class, always-displayed caveat (honesty by design). A pluggable seam is left for real chain data later.
+2. **Scope: options overlay only.** Fundamental screener filters, per-asset regime, and correlation-to-holdings stay deferred.
+3. **All four structures at once:** covered calls, cash-secured puts, vertical spreads (defined-risk), and LEAPs. (Orchestrator recommended phasing; user chose all-at-once.)
+
+## Modeling ground rules
+
+- BSM on the existing adjusted-close series with q=0, rationale and limitations documented (adjusted prices ≈ total-return frame; dividend-driven early assignment cannot be modeled — assignment probability is reported as model P(ITM at expiry), labeled as such).
+- Vol proxy strictly causal (rolling/EWMA realized vol at t uses data ≤ t only); look-ahead guard tests mandatory, same discipline as v1 strategies.
+- Hard constraints enforced structurally: every structure must have provably bounded loss (covered, cash-secured, or spread-width-capped); a config that isn't defined-risk is rejected, not warned.
+- Costs: per-contract commission + synthetic spread haircut on premium, both configurable.
+- Honesty: overlays are always reported against the underlying's buy-and-hold on the same window (upside forgone shown, not hidden); walk-forward + bootstrap applied to overlay return series exactly as v1 applies them to strategies.
+
+## Milestones & delegation
+
+| # | Milestone | Key deliverables | Implementor |
+|---|---|---|---|
+| V2-M1 | Options pricing core (`funnel/options/pricing.py`) | BSM price/delta/P(ITM), causal realized-vol proxy + vol-risk-premium knob, golden-value + put-call-parity + causality tests | **Fable** |
+| V2-M2 | Structures + roll engine (`funnel/options/overlays.py`) | Covered call, CSP, vertical spreads, LEAPs on a daily grid: expiry/strike selection (DTE + delta or %OTM targets), roll rules incl. assignment-avoidance roll, expiry settlement + assignment events, defined-risk validation, overlay daily-return series, yield/assignment/upside-forgone metrics | **Fable** |
+| V2-M3 | Overlay grid + validation (`funnel/options/grid.py`, `sweep.py`) | Config grid (structure × delta target × DTE × roll rule), walk-forward scoring + bootstrap stress reusing v1 primitives, overlay-vs-buy-and-hold comparison table, `overlay_results.csv` | **Fable** |
+| V2-M4 | Pipeline + API integration | Overlay run type in pipeline/jobs, endpoints (start/status/report/artifact), report.json `overlays` section incl. the model-risk caveat, offline tests via SyntheticSource | **Sonnet** |
+| V2-M5 | catfu UI: OVERLAYS deck | Symbol/structure/target pickers, yield-vs-assignment table, overlay-vs-hold comparison, permanent model-risk banner, CSV download; contract §13 checklist | **Fable** |
+| V2-M6 | Docs + e2e verification | ARCHITECTURE/OPEN_ITEMS/README updates, CHANGELOG, full gates, watched real-data overlay run in Docker | **Sonnet** |
+
+## v2 verification
+
+- Pricing: golden BSM values, put-call parity, delta/P(ITM) bounds and monotonicity, vol-proxy truncation invariance.
+- Overlays: hand-computed roll fixtures (premium collection, settlement, assignment); defined-risk rejection tests; cost application.
+- Comparability: overlay walk-forward windows identical in construction to v1's; bootstrap deterministic under seed.
+- E2E: real-data overlay run on core holdings (e.g. AAPL, MSFT) in the container; verify the report shows upside-forgone and any negative overlay results plainly.
+
+## v2 success criteria
+
+User can pick a core holding, configure a defined-risk overlay, and get a walk-forward-validated report of yield vs. assignment probability vs. upside forgone — side-by-side with buy-and-hold, model-risk caveats always visible, and no structure with unbounded loss expressible anywhere in the system.
