@@ -155,6 +155,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `model_priced=True` and the labeled `mean_model_prob_itm` column —
   upside forgone and negative vs-hold Sharpe are always present, never
   filtered.
+- V2-M4: Overlay run type + API — `run_overlay_pipeline` (symbol-scoped
+  fetch, min-history filter, sweep, `overlay_results.csv` + `report.json`
+  with `run_type: "overlay"` and an always-embedded model-risk caveat),
+  `POST /api/overlays` (universe-validated symbols, ≤10, same background
+  job/status/artifact machinery incl. run-id traversal guards),
+  `GET /api/overlays/universe` for the UI picker; strategy reports now
+  carry `run_type: "strategy"`.
 
 ### Changed
 

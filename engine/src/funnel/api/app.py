@@ -18,11 +18,25 @@ from funnel.api.jobs import JobRegistry, JobStatus
 from funnel.api.testing import SyntheticSource
 from funnel.config import CostModel, FunnelThresholds, WalkForwardConfig
 from funnel.data.sources import CachedSource, DataSource, YFinanceSource
-from funnel.pipeline import ARTIFACT_NAMES, PipelineConfig, run_pipeline
+from funnel.data.universe import ASSET_UNIVERSE
+from funnel.options.grid import OverlayConfig
+from funnel.options.pricing import VolProxyConfig
+from funnel.pipeline import (
+    ARTIFACT_NAMES,
+    OverlayRunConfig,
+    PipelineConfig,
+    run_overlay_pipeline,
+    run_pipeline,
+)
 from funnel.profiles.mapping import explain_mapping, ranking_weights, thresholds_for
 from funnel.profiles.models import Profile, SliderValues
 from funnel.profiles.store import delete_profile, list_profiles, load_profile, save_profile
 from funnel.strategies.grid import StrategyConfig
+
+_OVERLAY_SYMBOLS_CAP = 10
+"""Max number of symbols accepted per POST /api/overlays request — an
+overlay sweep is O(configs x symbols), so this keeps a single request's
+runtime bounded."""
 
 REPORT_ARTIFACT_NAME = "report.json"
 _ARTIFACT_WHITELIST = frozenset(ARTIFACT_NAMES) - {REPORT_ARTIFACT_NAME}
@@ -97,6 +111,18 @@ def get_strategy_configs() -> list[StrategyConfig] | None:
     return None
 
 
+def get_overlay_configs() -> list[OverlayConfig] | None:
+    """Resolve the overlay grid override for new overlay runs.
+
+    ``None`` (the production default) runs the full ``build_overlay_grid()``
+    grid inside ``run_overlay_pipeline``. Tests monkeypatch
+    ``funnel.api.app.get_overlay_configs`` to return a small, explicit list
+    so a POST /api/overlays test completes in seconds instead of running the
+    full production overlay grid.
+    """
+    return None
+
+
 class SliderValuesModel(BaseModel):
     capital: int
     risk_tolerance: int
@@ -115,6 +141,10 @@ class SaveProfileRequest(BaseModel):
 class CreateRunRequest(BaseModel):
     profile_name: str | None = None
     sliders: SliderValuesModel | None = None
+
+
+class CreateOverlayRunRequest(BaseModel):
+    symbols: list[str]
 
 
 def _profile_to_dict(profile: Profile) -> dict[str, Any]:
@@ -215,6 +245,46 @@ def create_app() -> FastAPI:
 
         registry.submit(run_id, work)
         return {"run_id": run_id}
+
+    @app.post("/api/overlays")
+    def create_overlay_run(request: CreateOverlayRunRequest) -> dict[str, str]:
+        if not request.symbols:
+            raise HTTPException(status_code=400, detail="symbols must not be empty")
+        if len(request.symbols) > _OVERLAY_SYMBOLS_CAP:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"at most {_OVERLAY_SYMBOLS_CAP} symbols allowed, got {len(request.symbols)}"
+                ),
+            )
+        valid_symbols = {spec.symbol for spec in ASSET_UNIVERSE}
+        unknown = [s for s in request.symbols if s not in valid_symbols]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"unknown symbol(s): {unknown}")
+
+        run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+
+        source = get_data_source()
+        overlay_config = OverlayRunConfig(
+            symbols=request.symbols,
+            wf=WalkForwardConfig(),
+            vol_config=VolProxyConfig(),
+            thresholds=FunnelThresholds(),
+            configs=get_overlay_configs(),
+        )
+
+        def work(progress: Any) -> None:
+            run_overlay_pipeline(overlay_config, source, runs_dir(), run_id, progress=progress)
+
+        registry.submit(run_id, work)
+        return {"run_id": run_id}
+
+    @app.get("/api/overlays/universe")
+    def get_overlay_universe() -> list[dict[str, str]]:
+        return [
+            {"symbol": spec.symbol, "asset_class": spec.asset_class.value}
+            for spec in ASSET_UNIVERSE
+        ]
 
     @app.get("/api/runs")
     def list_runs() -> list[dict[str, Any]]:

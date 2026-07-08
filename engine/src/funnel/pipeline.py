@@ -29,7 +29,13 @@ from funnel.backtest.sweep import run_sweep, write_sweep_results
 from funnel.backtest.walkforward import InsufficientHistoryError, walk_forward_oos
 from funnel.config import CostModel, FunnelThresholds, WalkForwardConfig
 from funnel.data.sources import DataSource
-from funnel.data.universe import ASSET_UNIVERSE, DEFAULT_END, DEFAULT_START, filter_universe
+from funnel.data.universe import (
+    ASSET_UNIVERSE,
+    DEFAULT_END,
+    DEFAULT_START,
+    MIN_HISTORY_DAYS,
+    filter_universe,
+)
 from funnel.layers.stack import (
     SizingChoice,
     SizingMethod,
@@ -42,6 +48,10 @@ from funnel.momentum.cross_sectional import (
     run_cross_sectional_check,
     write_cross_sectional,
 )
+from funnel.options.grid import OverlayConfig, build_overlay_grid, summarize_overlay_grid
+from funnel.options.overlays import OverlayCosts
+from funnel.options.pricing import VolProxyConfig
+from funnel.options.sweep import run_overlay_sweep, write_overlay_results
 from funnel.portfolio.correlation import correlation_matrix, redundancy_flags, write_correlation
 from funnel.profiles.mapping import explain_mapping, thresholds_for
 from funnel.profiles.models import Profile
@@ -81,8 +91,27 @@ ARTIFACT_NAMES: tuple[str, ...] = (
     "regime_performance.csv",
     "layer_attribution.csv",
     "correlation_matrix.csv",
+    "overlay_results.csv",
     "report.json",
 )
+
+OVERLAY_MODEL_RISK_CAVEAT = (
+    "All option prices in this report are synthetic Black-Scholes-Merton model "
+    "prices computed on the underlying's adjusted-close series with dividend "
+    "yield q=0 — no real historical option-chain data was used or is available "
+    "from free sources. Volatility is a causal realized-volatility proxy "
+    "(rolling or EWMA, using only data at or before each pricing date) scaled "
+    "by a configurable vol-risk-premium multiplier, not an observed market "
+    "implied volatility. Every reported assignment/exercise figure "
+    "(mean_model_prob_itm) is the model's risk-neutral P(ITM at expiry) under "
+    "these assumptions — it is NOT a market-implied probability, a "
+    "real-world forecast, or a guarantee, and dividend-driven early "
+    "assignment is not modeled. Treat all yields, assignment rates, and "
+    "comparisons to buy-and-hold here as model estimates conditioned on these "
+    "simplifications, not as tradeable guarantees."
+)
+"""One-paragraph, always-displayed model-risk caveat for overlay runs
+(PLAN.md "v2 — Options Overlay Module", modeling ground rules)."""
 
 
 def _default_progress(message: str) -> None:
@@ -115,6 +144,41 @@ class PipelineResult:
     run_dir: Path
     report: dict[str, Any]
     artifact_paths: dict[str, Path]
+
+
+@dataclass(slots=True, frozen=True)
+class OverlayRunConfig:
+    """Everything one overlay-sweep run needs, independent of I/O plumbing.
+
+    Lightweight sibling of ``PipelineConfig`` for the options-overlay run
+    type (PLAN.md "v2 — Options Overlay Module", V2-M4): unlike a full
+    strategy run, an overlay run fetches only the caller-requested
+    ``symbols`` rather than the whole universe.
+    """
+
+    symbols: list[str]
+    """Requested underlyings. Must be non-empty and every symbol must be a
+    member of ``ASSET_UNIVERSE`` — validated in ``__post_init__``."""
+
+    wf: WalkForwardConfig
+    vol_config: VolProxyConfig
+    costs: OverlayCosts = OverlayCosts()
+    rate: float = 0.03
+    thresholds: FunnelThresholds = FunnelThresholds()
+    n_bootstrap: int = 200
+    seed: int = 42
+    configs: list[OverlayConfig] | None = None
+    """Override the full overlay grid (``build_overlay_grid()``) with a
+    smaller, explicit list — used by tests to keep runtime sane. ``None``
+    (the production default) runs the full grid."""
+
+    def __post_init__(self) -> None:
+        if not self.symbols:
+            raise ValueError("OverlayRunConfig.symbols must not be empty")
+        valid_symbols = {spec.symbol for spec in ASSET_UNIVERSE}
+        unknown = [s for s in self.symbols if s not in valid_symbols]
+        if unknown:
+            raise ValueError(f"unknown symbol(s) not in ASSET_UNIVERSE: {unknown}")
 
 
 def _json_safe(value: Any) -> Any:
@@ -330,6 +394,7 @@ def run_pipeline(
     finished_at = datetime.now(UTC).isoformat()
     report: dict[str, Any] = {
         "run_id": run_id,
+        "run_type": "strategy",
         "started_at": started_at,
         "finished_at": finished_at,
         "profile": {
@@ -378,6 +443,92 @@ def run_pipeline(
             "redundancy_flags": _records(redundancy_df),
         },
         "screen": screen_summary_dict,
+        "warnings": warnings,
+    }
+    report = _json_safe(report)
+
+    report_path = run_dir / "report.json"
+    report_path.write_text(json.dumps(report, indent=2))
+    artifact_paths["report.json"] = report_path
+
+    progress("stage: done")
+    return PipelineResult(run_dir=run_dir, report=report, artifact_paths=artifact_paths)
+
+
+def run_overlay_pipeline(
+    config: OverlayRunConfig,
+    source: DataSource,
+    runs_dir: Path,
+    run_id: str,
+    progress: Callable[[str], None] = _default_progress,
+) -> PipelineResult:
+    """Run the options-overlay sweep for ``config.symbols`` and write every artifact.
+
+    Lightweight sibling of ``run_pipeline`` (PLAN.md V2-M4): fetches only the
+    requested symbols (not the whole universe), sweeps the overlay grid
+    against them, and writes ``overlay_results.csv`` + ``report.json``. A
+    zero-eligible-symbols run (every requested symbol filtered out by the
+    min-history check) completes honestly with empty rows and a warning,
+    exactly as v1 does for a zero-survivor strategy run.
+    """
+    started_at = datetime.now(UTC).isoformat()
+    run_dir = runs_dir / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    artifact_paths: dict[str, Path] = {}
+    warnings: list[str] = []
+
+    # --- 1. data -------------------------------------------------------
+    progress("stage: data")
+    raw_data = {
+        symbol: source.fetch(symbol, DEFAULT_START, DEFAULT_END) for symbol in config.symbols
+    }
+    data = filter_universe(raw_data)
+    if not data:
+        warnings.append(
+            f"data: all {len(config.symbols)} requested symbol(s) were filtered out "
+            f"(< {MIN_HISTORY_DAYS} rows of history); overlay sweep has zero eligible symbols."
+        )
+
+    # --- 2. sweep ----------------------------------------------------------
+    overlay_configs = config.configs if config.configs is not None else build_overlay_grid()
+    n_total = len(overlay_configs) * len(data)
+    progress(
+        f"stage: sweep — {len(overlay_configs)} overlay configs x {len(data)} symbols "
+        f"= {n_total} overlay backtests"
+    )
+    overlay_df = run_overlay_sweep(
+        data,
+        overlay_configs,
+        list(data.keys()),
+        config.wf,
+        config.vol_config,
+        config.costs,
+        config.rate,
+        config.thresholds,
+        config.n_bootstrap,
+        config.seed,
+    )
+    overlay_path = run_dir / "overlay_results.csv"
+    write_overlay_results(overlay_df, overlay_path)
+    artifact_paths["overlay_results.csv"] = overlay_path
+
+    # --- 3. report.json ------------------------------------------------
+    progress("stage: report")
+    finished_at = datetime.now(UTC).isoformat()
+    report: dict[str, Any] = {
+        "run_id": run_id,
+        "run_type": "overlay",
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "symbols": config.symbols,
+        "transparency": {
+            "n_configs": len(overlay_configs),
+            "n_symbols": len(data),
+            "n_total": n_total,
+        },
+        "model_risk_caveat": OVERLAY_MODEL_RISK_CAVEAT,
+        "grid_summary": summarize_overlay_grid(overlay_configs),
+        "overlay_rows": _records(overlay_df),
         "warnings": warnings,
     }
     report = _json_safe(report)
