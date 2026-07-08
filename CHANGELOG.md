@@ -218,6 +218,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - RUN FUNNEL / RUN OVERLAYS buttons toggle to STOP RUN while a run is
   active, wired to the cancel API, with "cancelled" shown as a distinct
   honest end state (409 finished-before-cancel race handled).
+- Pipeline activity bar now shares a fit-content wrapper with the
+  stage-label row, so it ends at DONE instead of stretching the full
+  panel (both consoles, verified at 1280/768/375).
 
 ### Changed
 

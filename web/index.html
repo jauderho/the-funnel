@@ -461,6 +461,10 @@ input[type="text"]:focus { border-color: var(--blue); }
 }
 
 /* ============================ VU / PROGRESS SWEEP ========================= */
+/* shared shrink-to-fit box so the VU bar's width always matches the actual
+   (possibly-wrapped) width of the stage-LED row above it, never the full
+   flex-basis of the panel column (issue: bar was running past "DONE"). */
+.stage-vu-wrap { width: fit-content; max-width: 100%; }
 .vu { display: flex; gap: 2px; height: 16px; width: 100%; }
 .vu .seg2 { flex: 1 1 0; min-width: 0; background: var(--ink-faint); }
 .vu .seg2.lit-g { background: var(--green); }
@@ -618,8 +622,10 @@ footer {
 
     <div style="flex:1; min-width:280px;">
       <div class="lbl">pipeline stage</div>
-      <div class="stage-leds" id="stage-leds"></div>
-      <div class="vu" id="vu-meter" aria-hidden="true"></div>
+      <div class="stage-vu-wrap">
+        <div class="stage-leds" id="stage-leds"></div>
+        <div class="vu" id="vu-meter" aria-hidden="true"></div>
+      </div>
       <div id="run-state-line" class="lbl dim" style="margin-top:8px;">state: idle</div>
       <div id="run-error" class="diag" style="display:none; margin-top:8px;"></div>
     </div>
@@ -703,8 +709,10 @@ footer {
       <button class="btn primary big" id="run-overlays-btn" disabled>run overlays</button>
       <div style="height:16px"></div>
       <div class="lbl">pipeline stage</div>
-      <div class="stage-leds" id="overlay-stage-leds"></div>
-      <div class="vu" id="overlay-vu-meter" aria-hidden="true"></div>
+      <div class="stage-vu-wrap">
+        <div class="stage-leds" id="overlay-stage-leds"></div>
+        <div class="vu" id="overlay-vu-meter" aria-hidden="true"></div>
+      </div>
       <div id="overlay-state-line" class="lbl dim" style="margin-top:8px;">state: idle</div>
       <div id="overlay-error" class="diag" style="display:none; margin-top:8px;"></div>
     </div>
