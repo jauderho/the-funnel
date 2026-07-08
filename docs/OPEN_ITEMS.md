@@ -12,10 +12,12 @@ Known gaps and deferred work, stated plainly per the honesty-by-design principle
   `0.0.0.0`, every fetch returns empty, and the pipeline honestly reports a
   zero-asset run. Its fallback "csrf" consent flow yields no token from US IPs,
   so both yfinance cookie strategies dead-end when that host is blocked.
-  Durable fix: whitelist `fc.yahoo.com` in the DNS blocker; stopgap: the
-  commented `extra_hosts` pin in `compose.yaml`. The `YFinanceSource` csrf
-  fallback (with offline tests) remains as belt-and-braces for networks where
-  csrf works.
+  Durable fix: whitelist `fc.yahoo.com` in the DNS blocker — applied on this
+  LAN 2026-07-08 and re-verified with a clean (pin-free) container: 31 assets,
+  4650 backtests, 16 survivors, no warnings. The commented `extra_hosts` pin in
+  `compose.yaml` remains as a documented stopgap for other DNS-filtered
+  networks, and the `YFinanceSource` csrf fallback (with offline tests) stays
+  as belt-and-braces.
 - **The host's docker CLI dispatch is currently broken (OrbStack, machine-level,
   not this repo).** After an OrbStack update/handoff on 2026-07-07, the
   `docker-tools` multiplexer answers as Docker Compose ("v5.3.0") for every
