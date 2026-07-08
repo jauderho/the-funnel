@@ -31,7 +31,7 @@ HONESTY RULES (PLAN.md, "v2 — Options Overlay Module")
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +44,7 @@ from funnel.backtest.walkforward import (
     _is_oos_split,
     _window_bounds,
 )
+from funnel.cancellation import RunCancelledError
 from funnel.config import FunnelThresholds, WalkForwardConfig
 from funnel.options.grid import OverlayConfig
 from funnel.options.overlays import OverlayCosts, UndefinedRiskError, simulate_overlay
@@ -208,6 +209,7 @@ def run_overlay_sweep(
     thresholds: FunnelThresholds,
     n_bootstrap: int = 200,
     seed: int = 42,
+    should_stop: Callable[[], bool] | None = None,
 ) -> pd.DataFrame:
     """Run every (overlay config, symbol) pair through simulation + walk-forward + bootstrap.
 
@@ -224,6 +226,13 @@ def run_overlay_sweep(
     guarded here defensively) or when the symbol's history is too short for
     a meaningful walk-forward split (``InsufficientHistoryError``, raised by
     ``score_overlay``).
+
+    ``should_stop``, if given, is checked once per (config, symbol)
+    iteration — same discipline as ``funnel.backtest.sweep.run_sweep``, and
+    for the same reason: a stage-boundary check alone would leave a
+    multi-minute overlay sweep unstoppable. When it returns ``True``,
+    ``RunCancelledError`` is raised immediately and no rows (nor
+    ``overlay_results.csv``) are written for this run.
     """
     all_symbols = list(data.keys()) if symbols is None else symbols
     total = len(configs) * len(all_symbols)
@@ -243,6 +252,8 @@ def run_overlay_sweep(
     for symbol in all_symbols:
         df = data[symbol]
         for config in configs:
+            if should_stop is not None and should_stop():
+                raise RunCancelledError("run_overlay_sweep cancelled")
             try:
                 result = simulate_overlay(df, config.spec, vol_config, costs, rate)
                 overlay_score = score_overlay(result.returns, wf)

@@ -210,12 +210,23 @@ def run_pipeline(
     runs_dir: Path,
     run_id: str,
     progress: Callable[[str], None] = _default_progress,
+    should_stop: Callable[[], bool] | None = None,
 ) -> PipelineResult:
     """Run the full funnel pipeline end to end and write every artifact.
 
     ``source`` is injected (never hardcoded) so tests can supply a
     synthetic, network-free ``DataSource``. Every stage announces itself via
     ``progress`` before doing its work.
+
+    ``should_stop``, if given, is threaded into the sweep stage
+    (``run_sweep``), which checks it once per (config, asset) iteration —
+    the only stage long enough that a stage-boundary-only cancellation check
+    would leave it unstoppable for minutes. If cancellation is requested
+    mid-sweep, ``run_sweep`` raises ``RunCancelledError`` (from
+    ``funnel.cancellation``), which propagates out of this function
+    unhandled: no ``sweep_results.csv`` and no later artifact (including
+    ``report.json``) is written for this run. Any artifact this function had
+    already written before that point is left on disk as-is.
     """
     started_at = datetime.now(UTC).isoformat()
     run_dir = runs_dir / run_id
@@ -243,7 +254,9 @@ def run_pipeline(
     progress("stage: sweep")
     configs = config.configs if config.configs is not None else build_all_configs()
     transparency_count = total_backtest_count(len(configs), len(data))
-    sweep_df = run_sweep(data, configs, asset_classes, config.wf, thresholds, config.costs)
+    sweep_df = run_sweep(
+        data, configs, asset_classes, config.wf, thresholds, config.costs, should_stop=should_stop
+    )
     sweep_path = run_dir / "sweep_results.csv"
     write_sweep_results(sweep_df, sweep_path)
     artifact_paths["sweep_results.csv"] = sweep_path
@@ -461,6 +474,7 @@ def run_overlay_pipeline(
     runs_dir: Path,
     run_id: str,
     progress: Callable[[str], None] = _default_progress,
+    should_stop: Callable[[], bool] | None = None,
 ) -> PipelineResult:
     """Run the options-overlay sweep for ``config.symbols`` and write every artifact.
 
@@ -470,6 +484,14 @@ def run_overlay_pipeline(
     zero-eligible-symbols run (every requested symbol filtered out by the
     min-history check) completes honestly with empty rows and a warning,
     exactly as v1 does for a zero-survivor strategy run.
+
+    ``should_stop``, if given, is threaded into the sweep stage
+    (``run_overlay_sweep``), which checks it once per (config, symbol)
+    iteration — same discipline as ``run_pipeline``. If cancellation is
+    requested mid-sweep, ``run_overlay_sweep`` raises ``RunCancelledError``
+    (from ``funnel.cancellation``), which propagates out of this function
+    unhandled: no ``overlay_results.csv`` and no ``report.json`` is written
+    for this run.
     """
     started_at = datetime.now(UTC).isoformat()
     run_dir = runs_dir / run_id
@@ -507,6 +529,7 @@ def run_overlay_pipeline(
         config.thresholds,
         config.n_bootstrap,
         config.seed,
+        should_stop=should_stop,
     )
     overlay_path = run_dir / "overlay_results.csv"
     write_overlay_results(overlay_df, overlay_path)

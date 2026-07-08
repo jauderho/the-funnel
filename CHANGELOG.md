@@ -183,6 +183,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Δ vs hold compares stitched walk-forward OOS Sharpe, not full-period
   total return.
 
+- Run management — `run_type` ("strategy" | "overlay") now carried in
+  `status.json`, every `/api/runs` row, and `/status` responses (legacy
+  files read back as "strategy"), so clients never fetch a full report
+  just to classify a run; `POST /api/runs/{id}/cancel` with cooperative
+  cancellation (`funnel.cancellation.RunCancelledError`, checked at stage
+  boundaries and once per sweep iteration) and an honest `cancelled`
+  terminal state that never leaves partial artifacts; run listing now
+  scans disk once and serves from memory (stale "running" rows from a
+  dead process are corrected to errors).
+
 ### Changed
 
 - Design language switched from "Cyberdeck" to "catfu" (cassette-futurism):

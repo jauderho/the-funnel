@@ -118,10 +118,23 @@ def _wait_for_done(client: TestClient, run_id: str, timeout_s: float = 60.0) -> 
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         status = client.get(f"/api/runs/{run_id}/status").json()
-        if status["state"] in ("done", "error"):
+        if status["state"] in ("done", "error", "cancelled"):
             return status
         time.sleep(0.1)
     raise TimeoutError(f"run {run_id} did not finish within {timeout_s}s")
+
+
+def _wait_for_state(
+    client: TestClient, run_id: str, state: str, timeout_s: float = 30.0
+) -> dict[str, object]:
+    deadline = time.monotonic() + timeout_s
+    status: dict[str, object] = {}
+    while time.monotonic() < deadline:
+        status = client.get(f"/api/runs/{run_id}/status").json()
+        if status["state"] == state:
+            return status
+        time.sleep(0.02)
+    raise TimeoutError(f"run {run_id} never reached state {state!r}; last status: {status}")
 
 
 # ---------------------------------------------------------------------------
@@ -251,3 +264,69 @@ def test_strategy_run_report_has_run_type_strategy(fast_client: TestClient) -> N
 
     report = fast_client.get(f"/api/runs/{run_id}/report").json()
     assert report["run_type"] == "strategy"
+
+
+# ---------------------------------------------------------------------------
+# run_type: overlay runs are tagged in status and the /api/runs list too
+# (the report-level check lives in test_create_overlay_run_and_poll_to_done_
+# then_fetch_report above)
+# ---------------------------------------------------------------------------
+
+
+def test_overlay_run_status_and_list_have_run_type_overlay(fast_client: TestClient) -> None:
+    create_response = fast_client.post("/api/overlays", json={"symbols": ["AAPL"]})
+    run_id = create_response.json()["run_id"]
+
+    status = fast_client.get(f"/api/runs/{run_id}/status").json()
+    assert status["run_type"] == "overlay"
+
+    _wait_for_done(fast_client, run_id)
+
+    listed = fast_client.get("/api/runs").json()
+    row = next(r for r in listed if r["run_id"] == run_id)
+    assert row["run_type"] == "overlay"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/runs/{run_id}/cancel applied to an overlay run
+# ---------------------------------------------------------------------------
+
+
+def test_cancel_mid_run_overlay_transitions_to_cancelled_with_no_report(
+    fast_client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancelling a real (tiny-grid) overlay run mid-sweep must land in
+    ``"cancelled"`` and must never produce ``report.json`` (nor
+    ``overlay_results.csv``) — a half-swept overlay run is not an honest
+    result, mirroring the strategy-run cancellation contract."""
+    import funnel.options.sweep as overlay_sweep_module
+
+    real_simulate_overlay = overlay_sweep_module.simulate_overlay
+
+    def slow_simulate_overlay(df, spec, vol_config, costs, rate):
+        time.sleep(0.05)
+        return real_simulate_overlay(df, spec, vol_config, costs, rate)
+
+    monkeypatch.setattr(overlay_sweep_module, "simulate_overlay", slow_simulate_overlay)
+
+    create_response = fast_client.post(
+        "/api/overlays", json={"symbols": ["AAPL", "MSFT", "GOOGL", "AMZN"]}
+    )
+    run_id = create_response.json()["run_id"]
+
+    _wait_for_state(fast_client, run_id, "running")
+
+    cancel_response = fast_client.post(f"/api/runs/{run_id}/cancel")
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] in ("cancelling", "cancelled")
+
+    final_status = _wait_for_done(fast_client, run_id, timeout_s=30.0)
+    assert final_status["state"] == "cancelled", final_status
+    assert final_status["run_type"] == "overlay"
+
+    run_dir = tmp_path / "runs" / run_id
+    assert not (run_dir / "report.json").exists()
+    assert not (run_dir / "overlay_results.csv").exists()
+
+    report_response = fast_client.get(f"/api/runs/{run_id}/report")
+    assert report_response.status_code == 404

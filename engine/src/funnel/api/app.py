@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -240,10 +241,17 @@ def create_app() -> FastAPI:
             configs=get_strategy_configs(),
         )
 
-        def work(progress: Any) -> None:
-            run_pipeline(pipeline_config, source, runs_dir(), run_id, progress=progress)
+        def work(progress: Any, should_stop: Callable[[], bool]) -> None:
+            run_pipeline(
+                pipeline_config,
+                source,
+                runs_dir(),
+                run_id,
+                progress=progress,
+                should_stop=should_stop,
+            )
 
-        registry.submit(run_id, work)
+        registry.submit(run_id, work, run_type="strategy")
         return {"run_id": run_id}
 
     @app.post("/api/overlays")
@@ -273,10 +281,17 @@ def create_app() -> FastAPI:
             configs=get_overlay_configs(),
         )
 
-        def work(progress: Any) -> None:
-            run_overlay_pipeline(overlay_config, source, runs_dir(), run_id, progress=progress)
+        def work(progress: Any, should_stop: Callable[[], bool]) -> None:
+            run_overlay_pipeline(
+                overlay_config,
+                source,
+                runs_dir(),
+                run_id,
+                progress=progress,
+                should_stop=should_stop,
+            )
 
-        registry.submit(run_id, work)
+        registry.submit(run_id, work, run_type="overlay")
         return {"run_id": run_id}
 
     @app.get("/api/overlays/universe")
@@ -297,6 +312,22 @@ def create_app() -> FastAPI:
         if status is None:
             raise HTTPException(status_code=404, detail=f"unknown run_id {run_id!r}")
         return _status_to_dict(status)
+
+    @app.post("/api/runs/{run_id}/cancel")
+    def cancel_run(run_id: str) -> dict[str, str]:
+        _validate_run_id(run_id)
+        status = registry.get(run_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail=f"unknown run_id {run_id!r}")
+        if status.state in ("done", "error", "cancelled"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"run {run_id!r} already finished (state={status.state!r})",
+            )
+        registry.cancel(run_id)
+        updated = registry.get(run_id)
+        final_state = updated.state if updated is not None else status.state
+        return {"status": "cancelled" if final_state == "cancelled" else "cancelling"}
 
     @app.get("/api/runs/{run_id}/report")
     def get_run_report(run_id: str) -> dict[str, Any]:

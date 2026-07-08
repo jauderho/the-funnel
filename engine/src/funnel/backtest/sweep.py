@@ -10,7 +10,7 @@ honest.
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +18,7 @@ import pandas as pd
 from funnel.backtest.engine import cost_bps_for
 from funnel.backtest.funnel import apply_funnel
 from funnel.backtest.walkforward import InsufficientHistoryError, walk_forward_oos
+from funnel.cancellation import RunCancelledError
 from funnel.config import CostModel, FunnelThresholds, WalkForwardConfig
 from funnel.data.universe import AssetClass
 from funnel.strategies.grid import StrategyConfig, total_backtest_count
@@ -79,6 +80,7 @@ def run_sweep(
     wf: WalkForwardConfig,
     thresholds: FunnelThresholds,
     costs: CostModel,
+    should_stop: Callable[[], bool] | None = None,
 ) -> pd.DataFrame:
     """Run every (config, asset) pair through walk-forward + the six-filter funnel.
 
@@ -86,6 +88,14 @@ def run_sweep(
     ``AssetClass`` (used only to look up the per-asset-class cost rate, so
     it is hoisted out of the config loop below rather than recomputed per
     config).
+
+    ``should_stop``, if given, is checked once per (config, asset) iteration
+    — a stage-boundary check alone would leave a multi-minute sweep
+    unstoppable, since this function runs to completion before its caller's
+    next ``progress`` call. When it returns ``True``, ``RunCancelledError``
+    is raised immediately and no rows (nor ``sweep_results.csv``) are
+    written for this run; whatever a caller already wrote before invoking
+    this function is unaffected.
     """
     symbols = list(data.keys())
     total = total_backtest_count(len(configs), len(symbols))
@@ -101,6 +111,8 @@ def run_sweep(
         df = data[symbol]
         cost_bps = cost_by_symbol[symbol]
         for config in configs:
+            if should_stop is not None and should_stop():
+                raise RunCancelledError("run_sweep cancelled")
             try:
                 result = walk_forward_oos(df, config, wf, cost_bps)
             except InsufficientHistoryError:

@@ -217,10 +217,23 @@ def _wait_for_done(client: TestClient, run_id: str, timeout_s: float = 30.0) -> 
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         status = client.get(f"/api/runs/{run_id}/status").json()
-        if status["state"] in ("done", "error"):
+        if status["state"] in ("done", "error", "cancelled"):
             return status
         time.sleep(0.1)
     raise TimeoutError(f"run {run_id} did not finish within {timeout_s}s")
+
+
+def _wait_for_state(
+    client: TestClient, run_id: str, state: str, timeout_s: float = 30.0
+) -> dict[str, object]:
+    deadline = time.monotonic() + timeout_s
+    status: dict[str, object] = {}
+    while time.monotonic() < deadline:
+        status = client.get(f"/api/runs/{run_id}/status").json()
+        if status["state"] == state:
+            return status
+        time.sleep(0.02)
+    raise TimeoutError(f"run {run_id} never reached state {state!r}; last status: {status}")
 
 
 def test_create_run_and_poll_to_done_then_fetch_report_and_artifact(
@@ -363,3 +376,93 @@ def test_create_run_requires_profile_or_sliders(fast_client: TestClient) -> None
 def test_create_run_unknown_profile_name_404(fast_client: TestClient) -> None:
     response = fast_client.post("/api/runs", json={"profile_name": "does-not-exist"})
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# run_type: strategy runs are tagged, in both status and the /api/runs list
+# ---------------------------------------------------------------------------
+
+
+def test_strategy_run_status_and_list_have_run_type_strategy(fast_client: TestClient) -> None:
+    create_response = fast_client.post("/api/runs", json={"profile_name": PRESETS[0].name})
+    run_id = create_response.json()["run_id"]
+
+    status = fast_client.get(f"/api/runs/{run_id}/status").json()
+    assert status["run_type"] == "strategy"
+
+    _wait_for_done(fast_client, run_id)
+
+    listed = fast_client.get("/api/runs").json()
+    row = next(r for r in listed if r["run_id"] == run_id)
+    assert row["run_type"] == "strategy"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/runs/{run_id}/cancel
+# ---------------------------------------------------------------------------
+
+
+def test_cancel_unknown_run_404(fast_client: TestClient) -> None:
+    response = fast_client.post("/api/runs/never-existed/cancel")
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize("traversal_run_id", ["../evil", "..%2Fevil"])
+def test_cancel_traversal_run_id_rejected(fast_client: TestClient, traversal_run_id: str) -> None:
+    # Matches the existing traversal-hardening tests above: a URL-encoded
+    # traversal segment is rejected by `_validate_run_id` (400), while a
+    # literal ".." segment may instead be normalized by the HTTP client
+    # before the request is even sent, landing on a different, still-404
+    # route — either way, the real run (if any) is never touched.
+    response = fast_client.post(f"/api/runs/{traversal_run_id}/cancel")
+    assert response.status_code in (400, 404)
+
+
+def test_cancel_after_done_409(fast_client: TestClient) -> None:
+    create_response = fast_client.post("/api/runs", json={"profile_name": PRESETS[0].name})
+    run_id = create_response.json()["run_id"]
+    _wait_for_done(fast_client, run_id)
+
+    response = fast_client.post(f"/api/runs/{run_id}/cancel")
+    assert response.status_code == 409
+
+
+def test_cancel_mid_run_strategy_transitions_to_cancelled_with_no_report(
+    fast_client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancelling a real (tiny-grid) strategy run mid-sweep must land in
+    ``"cancelled"`` and must never produce ``report.json`` (nor
+    ``sweep_results.csv``) — a half-swept run is not an honest result."""
+    import funnel.backtest.sweep as sweep_module
+
+    real_walk_forward_oos = sweep_module.walk_forward_oos
+
+    def slow_walk_forward_oos(df, config, wf, cost_bps):
+        time.sleep(0.05)
+        return real_walk_forward_oos(df, config, wf, cost_bps)
+
+    monkeypatch.setattr(sweep_module, "walk_forward_oos", slow_walk_forward_oos)
+
+    create_response = fast_client.post("/api/runs", json={"profile_name": PRESETS[0].name})
+    run_id = create_response.json()["run_id"]
+
+    _wait_for_state(fast_client, run_id, "running")
+
+    cancel_response = fast_client.post(f"/api/runs/{run_id}/cancel")
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] in ("cancelling", "cancelled")
+
+    final_status = _wait_for_done(fast_client, run_id, timeout_s=30.0)
+    assert final_status["state"] == "cancelled", final_status
+    assert final_status["run_type"] == "strategy"
+
+    run_dir = tmp_path / "runs" / run_id
+    assert not (run_dir / "report.json").exists()
+    assert not (run_dir / "sweep_results.csv").exists()
+
+    report_response = fast_client.get(f"/api/runs/{run_id}/report")
+    assert report_response.status_code == 404
+
+    listed = fast_client.get("/api/runs").json()
+    row = next(r for r in listed if r["run_id"] == run_id)
+    assert row["state"] == "cancelled"
