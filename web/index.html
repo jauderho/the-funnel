@@ -44,6 +44,12 @@
   --green:       #36e27b;
   --brass:       #c9a24b;
 
+  /* semantic CHASSIS text tokens (contract extension — same precedent as
+     --blue-bright in §3: adapts per theme so it clears WCAG AA on the page,
+     while --green/--amber stay fixed for LEDs/screens). dark = lit tokens. */
+  --green-text:  var(--green);
+  --amber-text:  var(--amber);
+
   --scan: rgba(255,255,255,.012);
   --dot:  rgba(95,176,240,.05);
 
@@ -72,6 +78,12 @@ html[data-theme="light"] {
   --blue-dim:    #4a6e93;
   --cyan:        #58c8df;
   --cta-ink:     #f6fbff;
+
+  /* darkened so pos/neg chassis text clears WCAG AA (>=4.5:1) against the
+     cream --bg (#ece7dc, the darkest chassis surface — verified 4.9:1 and
+     4.87:1 respectively via bounding-rect color math, see final summary). */
+  --green-text:  #0e7239;
+  --amber-text:  #a04a00;
 
   --scan: rgba(0,0,0,.018);
   --dot:  rgba(35,85,148,.07);
@@ -145,7 +157,7 @@ h1, h2, h3 { font-family: 'Archivo', system-ui, sans-serif; text-transform: lowe
 .navrow { display: flex; gap: 0; }
 .navlink {
   background: none; border: none; cursor: pointer;
-  padding: 0 10px; height: 38px;
+  padding: 0 10px; height: 100%;
   font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--ink-dim);
   border-right: 1px solid var(--line);
@@ -222,6 +234,9 @@ section:last-of-type { border-bottom: none; }
 .btn:active { transform: translateY(1px); }
 .btn.primary { background: var(--blue); color: var(--cta-ink); border-color: var(--blue); }
 .btn.primary:hover { background: var(--blue-bright); border-color: var(--blue-bright); }
+/* stop-run state — reuses the amber alert LED meaning (§3), not a new hue */
+.btn.stopbtn { background: var(--panel-2); color: var(--amber-text); border-color: var(--amber); }
+.btn.stopbtn:hover { background: color-mix(in srgb, var(--amber) 12%, transparent); border-color: var(--amber); }
 .btn:disabled, .tinybtn:disabled { opacity: .4; cursor: not-allowed; }
 .btn-row { display: flex; gap: 0; }
 .btn-row .btn { border-left: none; }
@@ -352,20 +367,21 @@ input[type="text"]:focus { border-color: var(--blue); }
 .ztable tr:last-child td { border-bottom: none; }
 .ztable tbody tr:hover td { background: var(--panel); }
 .ztable td.num { text-align: right; }
-.ztable td.neg { color: var(--amber); }
-.ztable td.pos { color: var(--green); }
+.ztable td.neg { color: var(--amber-text); }
+.ztable td.pos { color: var(--green-text); }
 .ztable td.truncate { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .pill {
   display: inline-block; padding: 3px 8px; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
   border: 1px solid var(--line-2);
 }
-.pill.solid { color: var(--green); border-color: var(--green); }
-.pill.fragile { color: var(--amber); border-color: var(--amber); background: color-mix(in srgb, var(--amber) 12%, transparent); font-weight: 600; }
+.pill.solid { color: var(--green-text); border-color: var(--green); }
+.pill.fragile { color: var(--amber-text); border-color: var(--amber); background: color-mix(in srgb, var(--amber) 12%, transparent); font-weight: 600; }
 .pill.tradeable { color: var(--screen-blue); border-color: var(--blue-dim); }
 .pill.research { color: var(--ink-faint); border-color: var(--line-2); }
-.pill.low-frac { color: var(--amber); border-color: var(--amber); }
+.pill.low-frac { color: var(--amber-text); border-color: var(--amber); }
 .pill.skipped { color: var(--ink-faint); border-color: var(--line-2); }
+.pill.neutral { color: var(--ink-faint); border-color: var(--line-2); }
 
 /* ============================ FUNNEL VIZ ================================ */
 .funnel-viz { display: flex; flex-direction: column; gap: 2px; margin: 20px 0; }
@@ -402,19 +418,25 @@ input[type="text"]:focus { border-color: var(--blue); }
   color: var(--ink-faint); font-size: 12px;
 }
 
+/* perf: skip layout/paint work for big table bodies scrolled out of view */
+.heavy-table-wrap { content-visibility: auto; contain-intrinsic-size: 0 600px; }
+
 /* ============================ RUN CONSOLE ================================ */
 .stage-leds { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0; }
 .stage-led-item { display: flex; align-items: center; gap: 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); }
 .stage-led-item .led { margin-right: 0; }
 .stage-led-item.active { color: var(--screen-blue); }
-.stage-led-item.done { color: var(--green); }
+.stage-led-item.done { color: var(--green-text); }
 
 .runs-list-item {
-  display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center;
+  display: grid; grid-template-columns: 1fr auto auto auto auto; gap: 12px; align-items: center;
   padding: 8px 10px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 11px;
+  content-visibility: auto; contain-intrinsic-size: 0 36px;
 }
 .runs-list-item:hover { background: var(--panel); }
 .runs-list-item.selected { background: var(--panel-2); border-left: 2px solid var(--blue); }
+.runs-list-item.cancelled { opacity: .55; cursor: default; }
+.runs-list-item.cancelled:hover { background: none; }
 .runs-list-item:last-child { border-bottom: none; }
 
 /* ============================ AGREEMENT MATRIX ============================ */
@@ -424,9 +446,23 @@ input[type="text"]:focus { border-color: var(--blue); }
   background: #06121f; border: 1px solid #0a3252;
 }
 
+/* compact index-keyed correlation grid (LAYERS view) — intensity-only cells;
+   exact value shown on hover/focus via a mini screen-token tooltip so the
+   11px accessibility floor is met without cramming text into a 22px cell. */
+.matrix-cell.mini {
+  width: 24px; height: 24px; position: relative; cursor: default;
+}
+.matrix-cell.mini:hover::after, .matrix-cell.mini:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute; z-index: 5; bottom: 100%; left: 50%; transform: translateX(-50%);
+  margin-bottom: 4px; white-space: nowrap;
+  background: #06121f; border: 1px solid #0a3252; color: var(--screen-blue);
+  font-size: 11px; padding: 3px 6px; font-variant-numeric: tabular-nums;
+}
+
 /* ============================ VU / PROGRESS SWEEP ========================= */
-.vu { display: flex; gap: 2px; height: 16px; }
-.vu .seg2 { width: 6px; background: var(--ink-faint); }
+.vu { display: flex; gap: 2px; height: 16px; width: 100%; }
+.vu .seg2 { flex: 1 1 0; min-width: 0; background: var(--ink-faint); }
 .vu .seg2.lit-g { background: var(--green); }
 .vu .seg2.lit-b { background: var(--screen-blue); }
 .vu .seg2.lit-a { background: var(--amber); }
@@ -677,7 +713,7 @@ footer {
   <div style="height:24px"></div>
   <div class="lbl">past overlay runs</div>
   <div id="overlay-runs-list" style="border:1px solid var(--line); margin-top:8px; max-height:200px; overflow-y:auto;">
-    <div class="empty-state">no overlay runs yet (this browser)</div>
+    <div class="empty-state">no overlay runs yet</div>
   </div>
 
   <div style="height:24px"></div>
@@ -707,11 +743,13 @@ footer {
     selectedRunId: null,
     pollTimer: null,
     mappingTimer: null,
+    runBtnMode: "run",
     overlayUniverse: [],
     overlaySymbols: [],
     overlaySelectedRunId: null,
     overlayPollTimer: null,
     overlayRunInFlight: false,
+    overlayBtnMode: "run",
   };
 
   var SLIDER_KEYS = ["capital", "risk_tolerance", "time_horizon", "drawdown_tolerance"];
@@ -720,7 +758,6 @@ footer {
   var OVERLAY_STRUCTURES = ["covered_call", "cash_secured_put", "vertical_spread", "leaps"];
   var OVERLAY_SYMBOLS_CAP = 10;
   var OVERLAY_CAVEAT_DEFAULT = "synthetic model prices — no historical option chains; probabilities are model p(itm), not forecasts.";
-  var OVERLAY_REGISTRY_KEY = "funnel-overlay-run-ids";
 
   // ---------------------------------------------------------------- utils
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -744,6 +781,13 @@ footer {
     if (v === null || v === undefined || isNaN(v)) return "n/a";
     return Number(v).toFixed(digits === undefined ? 2 : digits);
   }
+  function pad2(n) {
+    var s = String(n);
+    return s.length < 2 ? "0" + s : s;
+  }
+  function runTypeChip(runType) {
+    return el("span", { class: "pill neutral", text: runType });
+  }
   function debounce(fn, ms) {
     var t = null;
     return function () {
@@ -758,30 +802,6 @@ footer {
   function setDiag(container, msg) {
     container.innerHTML = "";
     container.appendChild(el("div", { class: "diag" }, [document.createTextNode(msg)]));
-  }
-
-  // ------------------------------------------------------- overlay run registry
-  // /api/runs rows carry no run_type (status.json predates the overlay run
-  // type), so a run's type is only knowable once its report.json is fetched
-  // (report.run_type is always present there). This localStorage registry
-  // remembers every run_id resolved as "overlay" — either because this
-  // browser started it via POST /api/overlays, or because its report was
-  // fetched at least once and turned out to be an overlay run — so the past-
-  // runs lists can route/label it correctly without re-fetching. A run never
-  // opened in this browser is simply unresolved until first opened; that is
-  // the documented, honest limit of this approach.
-  function loadOverlayRegistry() {
-    try { return JSON.parse(localStorage.getItem(OVERLAY_REGISTRY_KEY) || "[]"); } catch (e) { return []; }
-  }
-  function markOverlayRun(runId) {
-    var ids = loadOverlayRegistry();
-    if (ids.indexOf(runId) === -1) {
-      ids.push(runId);
-      try { localStorage.setItem(OVERLAY_REGISTRY_KEY, JSON.stringify(ids)); } catch (e) {}
-    }
-  }
-  function isKnownOverlayRun(runId) {
-    return loadOverlayRegistry().indexOf(runId) !== -1;
   }
 
   // ---------------------------------------------------------------- clock
@@ -1036,7 +1056,7 @@ footer {
   var vuTimers = {};
   function renderVu(sel, running) {
     var vu = $(sel);
-    vu.innerHTML = "";
+    var frag = document.createDocumentFragment();
     var n = 24;
     var lit = running ? Math.floor(Math.random() * n) : 0;
     for (var i = 0; i < n; i++) {
@@ -1046,8 +1066,10 @@ footer {
         else if (i < n * 0.85) cls += " lit-b";
         else cls += " lit-a";
       }
-      vu.appendChild(el("div", { class: cls }));
+      frag.appendChild(el("div", { class: cls }));
     }
+    vu.innerHTML = "";
+    vu.appendChild(frag);
   }
   renderVu("#vu-meter", false);
   renderVu("#overlay-vu-meter", false);
@@ -1060,7 +1082,57 @@ footer {
     renderVu(sel, false);
   }
 
+  // ------------------------------------------------------------ run/stop button
+  // A single button doubles as "start" and "stop run" (issue 7): whichever
+  // run is currently tracked by a panel's poll loop (state.selectedRunId /
+  // state.overlaySelectedRunId — set right before startPolling/
+  // startOverlayPolling is called, whether that came from clicking the
+  // button or selecting a queued/running row from either past-runs list)
+  // is the run the STOP button targets. Mode is purely a function of
+  // whether that panel's poll loop is currently active.
+  function setButtonMode(panel, mode) {
+    var btn = $(panel === "run" ? "#run-btn" : "#run-overlays-btn");
+    if (panel === "run") state.runBtnMode = mode; else state.overlayBtnMode = mode;
+    btn.classList.toggle("primary", mode === "run");
+    btn.classList.toggle("stopbtn", mode !== "run");
+    var label = panel === "run" ? "run funnel" : "run overlays";
+    btn.textContent = mode === "run" ? label : (mode === "stopping" ? "stopping…" : "stop run");
+    if (mode === "stopping") btn.disabled = true;
+    else if (mode === "stop") btn.disabled = false;
+    else if (panel === "overlay") updateOverlaySelectionState();
+    else btn.disabled = false;
+  }
+
+  function stateLine(status) {
+    return "state: " + status.state + (status.stage && status.stage !== status.state ? " (" + status.stage + ")" : "");
+  }
+
+  function requestCancel(runId, panel) {
+    if (!runId) return;
+    setButtonMode(panel, "stopping");
+    fetch("/api/runs/" + runId + "/cancel", { method: "POST" }).then(function (r) {
+      if (r.status === 404 || r.status === 409) return r.json().catch(function () { return {}; });
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || ("status " + r.status)); });
+      return r.json();
+      // response is {"status": "cancelled"} (was queued), {"status": "cancelling"}
+      // (running — the panel's own poll loop will observe the terminal state
+      // and revert the button itself), or a 404/409 body for an unknown/
+      // already-terminal run — either way there's nothing further to drive
+      // here: the next poll tick resolves the button state honestly.
+    }).catch(function (err) {
+      setButtonMode(panel, "stop");
+      var errSel = panel === "run" ? "#run-error" : "#overlay-error";
+      $(errSel).style.display = "block";
+      $(errSel).textContent = apiError("cancel failed", err);
+    });
+  }
+
   $("#run-btn").addEventListener("click", function () {
+    if (state.runBtnMode === "stop") {
+      requestCancel(state.selectedRunId, "run");
+      return;
+    }
+    if (state.runBtnMode === "stopping") return;
     var body;
     if (state.activeProfileName) {
       body = { profile_name: state.activeProfileName };
@@ -1081,7 +1153,7 @@ footer {
       startPolling(data.run_id);
       loadRunsList();
     }).catch(function (err) {
-      $("#run-btn").disabled = false;
+      setButtonMode("run", "run");
       $("#run-error").style.display = "block";
       $("#run-error").textContent = apiError("failed to start run", err);
     });
@@ -1089,6 +1161,7 @@ footer {
 
   function startPolling(runId) {
     if (state.pollTimer) clearInterval(state.pollTimer);
+    setButtonMode("run", "stop");
     startVu("#vu-meter");
     poll(runId);
     state.pollTimer = setInterval(function () { poll(runId); }, 1000);
@@ -1099,18 +1172,24 @@ footer {
       if (!r.ok) throw new Error("status " + r.status);
       return r.json();
     }).then(function (status) {
-      $("#run-state-line").textContent = "state: " + status.state + " (" + status.stage + ")";
+      $("#run-state-line").textContent = stateLine(status);
       updateStageLeds("#stage-leds", PIPELINE_STAGES, status.stage);
       if (status.state === "error") {
         clearInterval(state.pollTimer);
         stopVu("#vu-meter");
-        $("#run-btn").disabled = false;
+        setButtonMode("run", "run");
+        loadRunsList();
         $("#run-error").style.display = "block";
         $("#run-error").textContent = "run " + runId + " failed: " + (status.error || "unknown error");
+      } else if (status.state === "cancelled") {
+        clearInterval(state.pollTimer);
+        stopVu("#vu-meter");
+        setButtonMode("run", "run");
+        loadRunsList();
       } else if (status.state === "done") {
         clearInterval(state.pollTimer);
         stopVu("#vu-meter");
-        $("#run-btn").disabled = false;
+        setButtonMode("run", "run");
         loadRunsList();
         loadReport(runId);
       }
@@ -1132,81 +1211,109 @@ footer {
     });
   }
 
+  function runStateColor(runState) {
+    return runState === "done" ? "var(--green-text)"
+      : runState === "error" ? "var(--amber-text)"
+      : runState === "cancelled" ? "var(--ink-faint)"
+      : "var(--screen-blue)";
+  }
+
+  // routes a click on a run row by the row's OWN run_type field — no report
+  // fetch needed to decide where it goes (issue 1 / issue 2).
+  function openRunRow(run) {
+    if (run.state === "cancelled") return; // no report exists; not clickable
+    if (run.state === "done") {
+      loadReport(run.run_id, { switchView: true });
+      return;
+    }
+    var isOverlay = run.run_type === "overlay";
+    if (run.state === "running" || run.state === "queued") {
+      if (isOverlay) { startOverlayPolling(run.run_id); showView("view-overlays"); }
+      else { startPolling(run.run_id); showView("view-run"); }
+    } else if (run.state === "error") {
+      var errSel = isOverlay ? "#overlay-error" : "#run-error";
+      $(errSel).style.display = "block";
+      $(errSel).textContent = "run " + run.run_id + " failed: " + (run.error || "unknown error");
+      showView(isOverlay ? "view-overlays" : "view-run");
+    }
+  }
+
   function renderRunsList() {
     var container = $("#runs-list");
-    container.innerHTML = "";
     if (!state.runs.length) {
+      container.innerHTML = "";
       container.appendChild(el("div", { class: "empty-state", text: "no runs yet" }));
       renderOverlayRunsList();
       return;
     }
+    var frag = document.createDocumentFragment();
     state.runs.forEach(function (run) {
-      var stateColor = run.state === "done" ? "var(--green)" : run.state === "error" ? "var(--amber)" : "var(--screen-blue)";
-      var item = el("div", { class: "runs-list-item" + (run.run_id === state.selectedRunId ? " selected" : "") }, [
+      var cancelled = run.state === "cancelled";
+      var classes = "runs-list-item" + (run.run_id === state.selectedRunId ? " selected" : "") + (cancelled ? " cancelled" : "");
+      var item = el("div", { class: classes }, [
         el("span", { text: run.run_id }),
-        el("span", { style: "color:" + stateColor, text: run.state }),
+        runTypeChip(run.run_type),
+        el("span", { style: "color:" + runStateColor(run.state), text: run.state }),
         el("span", { class: "lbl dim", text: run.stage || "" }),
         el("span", { class: "lbl dim", text: run.started_at ? run.started_at.slice(11, 19) : "" }),
       ]);
-      item.addEventListener("click", function () {
-        state.selectedRunId = run.run_id;
-        renderRunsList();
-        if (run.state === "done") {
-          loadReport(run.run_id, { switchView: true });
-        } else if (run.state === "running" || run.state === "queued") {
-          if (isKnownOverlayRun(run.run_id)) {
-            startOverlayPolling(run.run_id);
-            showView("view-overlays");
-          } else {
-            startPolling(run.run_id);
-            showView("view-run");
-          }
-        } else if (run.state === "error") {
-          if (isKnownOverlayRun(run.run_id)) {
-            $("#overlay-error").style.display = "block";
-            $("#overlay-error").textContent = "run " + run.run_id + " failed: " + (run.error || "unknown error");
-            showView("view-overlays");
-          } else {
-            $("#run-error").style.display = "block";
-            $("#run-error").textContent = "run " + run.run_id + " failed: " + (run.error || "unknown error");
-            showView("view-run");
-          }
-        }
-      });
-      container.appendChild(item);
+      if (!cancelled) {
+        item.addEventListener("click", function () {
+          state.selectedRunId = run.run_id;
+          if (run.run_type === "overlay") state.overlaySelectedRunId = run.run_id;
+          renderRunsList();
+          openRunRow(run);
+        });
+      }
+      frag.appendChild(item);
     });
+    container.innerHTML = "";
+    container.appendChild(frag);
     renderOverlayRunsList();
   }
   loadRunsList();
 
   // =============================================================== REPORT
   var currentReport = null;
+  // Reports are immutable once a run is "done", so a run_id's report is
+  // fetched at most once per page load; re-selecting an already-loaded run
+  // (from either past-runs list) neither refetches nor re-renders (issue 2).
+  var loadedReports = {};
+  var lastRenderedRunId = null;
 
-  function loadReport(runId, opts) {
-    opts = opts || {};
-    fetch("/api/runs/" + runId + "/report").then(function (r) {
-      if (!r.ok) throw new Error("status " + r.status);
-      return r.json();
-    }).then(function (report) {
-      // report.run_type is the only reliable place a run's type lives
-      // (status.json / GET /api/runs rows predate the overlay run type and
-      // carry no such field) — so this is the single dispatch point that
-      // routes a fetched report to the overlay renderer or the funnel/
-      // robustness/cross/regime/layers renderers.
-      if (report.run_type === "overlay") {
-        markOverlayRun(runId);
-        renderOverlaySection(report);
-        renderOverlayRunsList();
-        if (opts.switchView) showView("view-overlays");
-        return;
-      }
+  function dispatchRender(report) {
+    if (report.run_type === "overlay") {
+      renderOverlaySection(report);
+      renderOverlayRunsList();
+    } else {
       currentReport = report;
       renderFunnelSection(report);
       renderRobustnessSection(report);
       renderCrossSection(report);
       renderRegimeSection(report);
       renderLayersSection(report);
-      if (opts.switchView) showView("view-funnel");
+    }
+  }
+
+  function loadReport(runId, opts) {
+    opts = opts || {};
+    var cached = loadedReports[runId];
+    if (cached) {
+      if (lastRenderedRunId !== runId) {
+        dispatchRender(cached);
+        lastRenderedRunId = runId;
+      }
+      if (opts.switchView) showView(cached.run_type === "overlay" ? "view-overlays" : "view-funnel");
+      return;
+    }
+    fetch("/api/runs/" + runId + "/report").then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.json();
+    }).then(function (report) {
+      loadedReports[runId] = report;
+      dispatchRender(report);
+      lastRenderedRunId = runId;
+      if (opts.switchView) showView(report.run_type === "overlay" ? "view-overlays" : "view-funnel");
     }).catch(function (err) {
       var msg = apiError("report fetch failed", err);
       setDiag($("#funnel-content"), msg);
@@ -1309,7 +1416,7 @@ footer {
         tbody.appendChild(tr);
       });
       table.appendChild(thead); table.appendChild(tbody);
-      container.appendChild(table);
+      container.appendChild(el("div", { class: "heavy-table-wrap" }, [table]));
     }
 
     container.appendChild(el("div", { style: "margin-top:16px;" }, [csvChip(runId, "funnel_report.csv"), document.createTextNode(" "), csvChip(runId, "sweep_results.csv")]));
@@ -1559,32 +1666,89 @@ footer {
     container.appendChild(el("div", { style: "margin:12px 0 24px;" }, [csvChip(runId, "layer_attribution.csv")]));
 
     container.appendChild(el("h3", { style: "margin-bottom:10px; font-size:14px;", text: "correlation / redundancy" }));
-    var corrNames = Object.keys(report.correlation.matrix || {});
+    var corrMatrix = report.correlation.matrix || {};
+    var corrNames = Object.keys(corrMatrix);
     if (!corrNames.length) {
       container.appendChild(el("div", { class: "empty-state", text: "no correlation matrix (fewer than 2 survivors)." }));
     } else {
-      var ctable = el("table", { class: "ztable" });
-      var headRow = el("tr", {}, [el("th", { text: "" })].concat(corrNames.map(function (n) { return el("th", { text: n }); })));
-      ctable.appendChild(el("thead", {}, [headRow]));
-      var cbody = el("tbody");
-      corrNames.forEach(function (rowName) {
-        var tr = el("tr", {}, [el("td", { text: rowName })]);
-        corrNames.forEach(function (colName) {
-          var v = report.correlation.matrix[rowName][colName];
-          var text = (v === null || v === undefined) ? "n/a" : fmtNum(v, 2);
-          var intensity = (v === null || v === undefined) ? 0 : Math.max(0, Math.min(1, Math.abs(v)));
-          var td = el("td");
-          td.appendChild(el("div", {
-            class: "matrix-cell",
-            style: "background: rgba(107,182,245," + (0.08 + intensity * 0.5).toFixed(2) + ");",
-            text: text
-          }));
-          tr.appendChild(td);
+      // full N x N matrix goes off-screen fast (long config::symbol names x
+      // many survivors) — redesigned as an index-keyed compact grid (values
+      // on hover/focus only, so the 11px readout floor is met without
+      // cramming text into tiny cells) plus a decision-useful top-pairs
+      // list. The full matrix is still available via the CSV chip below.
+      // Above ~24 survivors even the compact grid gets unwieldy, so it is
+      // suppressed entirely in favor of the pairs list + legend.
+      var MATRIX_MAX = 24;
+      var pairs = [];
+      for (var pi = 0; pi < corrNames.length; pi++) {
+        for (var pj = pi + 1; pj < corrNames.length; pj++) {
+          var pv = corrMatrix[corrNames[pi]][corrNames[pj]];
+          if (pv === null || pv === undefined) continue;
+          pairs.push({ a: corrNames[pi], b: corrNames[pj], corr: pv });
+        }
+      }
+      pairs.sort(function (x, y) { return Math.abs(y.corr) - Math.abs(x.corr); });
+      var topPairs = pairs.slice(0, 10);
+
+      if (corrNames.length > MATRIX_MAX) {
+        container.appendChild(el("div", { class: "lbl dim", style: "margin-bottom:14px;", text: corrNames.length + " survivors exceeds " + MATRIX_MAX + " — full matrix grid suppressed here; showing top correlated pairs below (full matrix via csv)." }));
+      } else {
+        container.appendChild(el("div", { class: "lbl dim", style: "margin-bottom:8px;", text: "cells show intensity only — hover or focus a cell for the exact value." }));
+        var gridRow = el("div", { style: "display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start; margin-bottom:20px;" });
+
+        var gtable = el("table", { class: "ztable", style: "width:auto;" });
+        var ghead = el("tr", {}, [el("th", { text: "" })].concat(corrNames.map(function (n, i) { return el("th", { text: "[" + pad2(i + 1) + "]" }); })));
+        gtable.appendChild(el("thead", {}, [ghead]));
+        var gbody = el("tbody");
+        corrNames.forEach(function (rowName, ri) {
+          var tr = el("tr", {}, [el("td", { text: "[" + pad2(ri + 1) + "]" })]);
+          corrNames.forEach(function (colName) {
+            var v = corrMatrix[rowName][colName];
+            var text = (v === null || v === undefined) ? "n/a" : fmtNum(v, 2);
+            var intensity = (v === null || v === undefined) ? 0 : Math.max(0, Math.min(1, Math.abs(v)));
+            var td = el("td", { style: "padding:2px;" });
+            td.appendChild(el("div", {
+              class: "matrix-cell mini", tabindex: "0",
+              "data-tip": rowName + " × " + colName + ": " + text,
+              "aria-label": rowName + " vs " + colName + ": " + text,
+              style: "background: rgba(107,182,245," + (0.08 + intensity * 0.5).toFixed(2) + ");",
+            }));
+            tr.appendChild(td);
+          });
+          gbody.appendChild(tr);
         });
-        cbody.appendChild(tr);
-      });
-      ctable.appendChild(cbody);
-      container.appendChild(ctable);
+        gtable.appendChild(gbody);
+        gridRow.appendChild(el("div", { style: "overflow-x:auto; width:100%; min-width:0; flex:1 1 260px;" }, [gtable]));
+
+        var legend = el("div", { style: "min-width:220px; max-width:360px;" });
+        legend.appendChild(el("div", { class: "lbl", style: "margin-bottom:6px;", text: "legend" }));
+        var legendList = el("div", { style: "display:grid; gap:2px; font-size:11px; max-height:400px; overflow-y:auto;" });
+        corrNames.forEach(function (n, i) {
+          legendList.appendChild(el("div", { text: "[" + pad2(i + 1) + "] " + n }));
+        });
+        legend.appendChild(legendList);
+        gridRow.appendChild(legend);
+
+        container.appendChild(gridRow);
+      }
+
+      container.appendChild(el("h3", { style: "margin-bottom:10px; font-size:14px;", text: "top correlated pairs" }));
+      if (!topPairs.length) {
+        container.appendChild(el("div", { class: "empty-state", text: "no pairs to compare." }));
+      } else {
+        var ptable = el("table", { class: "ztable" });
+        ptable.appendChild(el("thead", {}, [el("tr", {}, ["name a", "name b", "corr"].map(function (h) { return el("th", { text: h }); }))]));
+        var pbody = el("tbody");
+        topPairs.forEach(function (p) {
+          pbody.appendChild(el("tr", {}, [
+            el("td", { text: p.a }),
+            el("td", { text: p.b }),
+            el("td", { class: "num", text: fmtNum(p.corr, 3) }),
+          ]));
+        });
+        ptable.appendChild(pbody);
+        container.appendChild(ptable);
+      }
     }
 
     container.appendChild(el("h3", { style: "margin:16px 0 10px; font-size:14px;", text: "redundancy flags" }));
@@ -1676,10 +1840,16 @@ footer {
 
   function updateOverlaySelectionState() {
     $("#overlay-selected-count").textContent = state.overlaySymbols.length + " / " + OVERLAY_SYMBOLS_CAP + " selected";
+    if (state.overlayBtnMode !== "run") return;
     $("#run-overlays-btn").disabled = state.overlaySymbols.length === 0 || state.overlayRunInFlight;
   }
 
   $("#run-overlays-btn").addEventListener("click", function () {
+    if (state.overlayBtnMode === "stop") {
+      requestCancel(state.overlaySelectedRunId, "overlay");
+      return;
+    }
+    if (state.overlayBtnMode === "stopping") return;
     if (!state.overlaySymbols.length || state.overlayRunInFlight) return;
     state.overlayRunInFlight = true;
     updateOverlaySelectionState();
@@ -1691,14 +1861,14 @@ footer {
       if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || ("status " + r.status)); });
       return r.json();
     }).then(function (data) {
-      markOverlayRun(data.run_id);
+      state.overlayRunInFlight = false;
       state.overlaySelectedRunId = data.run_id;
       showView("view-overlays");
       startOverlayPolling(data.run_id);
       loadRunsList();
     }).catch(function (err) {
       state.overlayRunInFlight = false;
-      updateOverlaySelectionState();
+      setButtonMode("overlay", "run");
       $("#overlay-error").style.display = "block";
       $("#overlay-error").textContent = apiError("failed to start overlay run", err);
     });
@@ -1706,6 +1876,7 @@ footer {
 
   function startOverlayPolling(runId) {
     if (state.overlayPollTimer) clearInterval(state.overlayPollTimer);
+    setButtonMode("overlay", "stop");
     startVu("#overlay-vu-meter");
     overlayPoll(runId);
     state.overlayPollTimer = setInterval(function () { overlayPoll(runId); }, 1000);
@@ -1716,20 +1887,24 @@ footer {
       if (!r.ok) throw new Error("status " + r.status);
       return r.json();
     }).then(function (status) {
-      $("#overlay-state-line").textContent = "state: " + status.state + " (" + status.stage + ")";
+      $("#overlay-state-line").textContent = stateLine(status);
       updateStageLeds("#overlay-stage-leds", OVERLAY_STAGES, status.stage);
       if (status.state === "error") {
         clearInterval(state.overlayPollTimer);
         stopVu("#overlay-vu-meter");
-        state.overlayRunInFlight = false;
-        updateOverlaySelectionState();
+        setButtonMode("overlay", "run");
+        loadRunsList();
         $("#overlay-error").style.display = "block";
         $("#overlay-error").textContent = "run " + runId + " failed: " + (status.error || "unknown error");
+      } else if (status.state === "cancelled") {
+        clearInterval(state.overlayPollTimer);
+        stopVu("#overlay-vu-meter");
+        setButtonMode("overlay", "run");
+        loadRunsList();
       } else if (status.state === "done") {
         clearInterval(state.overlayPollTimer);
         stopVu("#overlay-vu-meter");
-        state.overlayRunInFlight = false;
-        updateOverlaySelectionState();
+        setButtonMode("overlay", "run");
         loadRunsList();
         loadReport(runId, { switchView: true });
       }
@@ -1741,35 +1916,41 @@ footer {
 
   function renderOverlayRunsList() {
     var container = $("#overlay-runs-list");
-    container.innerHTML = "";
-    var ids = loadOverlayRegistry();
-    var rows = state.runs.filter(function (r) { return ids.indexOf(r.run_id) !== -1; });
+    var rows = state.runs.filter(function (r) { return r.run_type === "overlay"; });
     if (!rows.length) {
-      container.appendChild(el("div", { class: "empty-state", text: "no overlay runs yet (this browser)" }));
+      container.innerHTML = "";
+      container.appendChild(el("div", { class: "empty-state", text: "no overlay runs yet" }));
       return;
     }
+    var frag = document.createDocumentFragment();
     rows.forEach(function (run) {
-      var stateColor = run.state === "done" ? "var(--green)" : run.state === "error" ? "var(--amber)" : "var(--screen-blue)";
-      var item = el("div", { class: "runs-list-item" + (run.run_id === state.overlaySelectedRunId ? " selected" : "") }, [
+      var cancelled = run.state === "cancelled";
+      var classes = "runs-list-item" + (run.run_id === state.overlaySelectedRunId ? " selected" : "") + (cancelled ? " cancelled" : "");
+      var item = el("div", { class: classes }, [
         el("span", { text: run.run_id }),
-        el("span", { style: "color:" + stateColor, text: run.state }),
+        runTypeChip(run.run_type),
+        el("span", { style: "color:" + runStateColor(run.state), text: run.state }),
         el("span", { class: "lbl dim", text: run.stage || "" }),
         el("span", { class: "lbl dim", text: run.started_at ? run.started_at.slice(11, 19) : "" }),
       ]);
-      item.addEventListener("click", function () {
-        state.overlaySelectedRunId = run.run_id;
-        renderOverlayRunsList();
-        if (run.state === "done") {
-          loadReport(run.run_id, { switchView: true });
-        } else if (run.state === "running" || run.state === "queued") {
-          startOverlayPolling(run.run_id);
-        } else if (run.state === "error") {
-          $("#overlay-error").style.display = "block";
-          $("#overlay-error").textContent = "run " + run.run_id + " failed: " + (run.error || "unknown error");
-        }
-      });
-      container.appendChild(item);
+      if (!cancelled) {
+        item.addEventListener("click", function () {
+          state.overlaySelectedRunId = run.run_id;
+          renderOverlayRunsList();
+          if (run.state === "done") {
+            loadReport(run.run_id, { switchView: true });
+          } else if (run.state === "running" || run.state === "queued") {
+            startOverlayPolling(run.run_id);
+          } else if (run.state === "error") {
+            $("#overlay-error").style.display = "block";
+            $("#overlay-error").textContent = "run " + run.run_id + " failed: " + (run.error || "unknown error");
+          }
+        });
+      }
+      frag.appendChild(item);
     });
+    container.innerHTML = "";
+    container.appendChild(frag);
   }
 
   function overlaySortComparator(key) {
@@ -1893,7 +2074,7 @@ footer {
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
-    container.appendChild(table);
+    container.appendChild(el("div", { class: "heavy-table-wrap" }, [table]));
 
     container.appendChild(el("div", { style: "margin-top:16px;" }, [csvChip(runId, "overlay_results.csv")]));
   }

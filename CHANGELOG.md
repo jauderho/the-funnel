@@ -193,6 +193,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   scans disk once and serves from memory (stale "running" rows from a
   dead process are corrected to errors).
 
+### Fixed (UI batch, user-reported)
+
+- Run rows now carry a run-type chip and route predictably (strategy →
+  FUNNEL, overlay → OVERLAYS) using the API's `run_type` field; the
+  report-fetch-based classification and its localStorage registry were
+  removed. Cancelled runs render dimmed and unclickable (no report exists).
+- Performance: loaded reports are cached in memory (re-selecting a run is
+  a 0.5 ms no-op with zero network calls vs a full refetch+render), list
+  renders batch through DocumentFragments, and heavy tables use
+  `content-visibility: auto`.
+- Light-mode legibility: new theme-adaptive `--green-text`/`--amber-text`
+  tokens (dark = the lit tokens; light = darkened variants at ≥4.8:1
+  measured contrast) for all chassis semantic text — a documented contract
+  extension following §3's `--blue-bright` precedent; screens/LEDs keep
+  the fixed lit tokens.
+- Removed the stray status-bar scrollbar (a 1px `.navlink` height overflow
+  coercing `overflow-y: auto`); the pipeline activity bar now stretches the
+  full panel width with discrete flex segments.
+- LAYERS view: the correlation matrix is now an index-keyed compact
+  intensity grid (values on hover) with a legend and a top-correlated-pairs
+  list — no horizontal page overflow at 375/768/1280; full matrix remains
+  in the CSV.
+- RUN FUNNEL / RUN OVERLAYS buttons toggle to STOP RUN while a run is
+  active, wired to the cancel API, with "cancelled" shown as a distinct
+  honest end state (409 finished-before-cancel race handled).
+
 ### Changed
 
 - Design language switched from "Cyberdeck" to "catfu" (cassette-futurism):
