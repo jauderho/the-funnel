@@ -145,3 +145,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   re-resolution at container start).
 - `.dockerignore` now uses `**/` globs so nested `engine/.venv`, caches,
   and bytecode are excluded — build context dropped from 419 MB to ~5 kB.
+- Live data: `YFinanceSource.fetch` now falls back once (per process) to
+  yfinance's "csrf" cookie strategy when a download comes back empty —
+  yfinance 1.4.1's default "basic" strategy bootstraps via `fc.yahoo.com`,
+  which refuses connections on some networks, previously yielding empty
+  frames and honest-but-useless zero-asset pipeline runs. The fallback is
+  logged, guarded against private-API drift, and covered by offline tests.
+- `.gitignore`: scoped `data/` and `runs/` to the repo root (`/data/`,
+  `/runs/`) — the unanchored `data/` pattern had been silently excluding
+  the entire `engine/src/funnel/data/` package (DataSource protocol,
+  yfinance source, cache, universe) from version control since M1; the
+  package is now actually tracked.
