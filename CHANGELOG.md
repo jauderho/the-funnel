@@ -162,6 +162,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   job/status/artifact machinery incl. run-id traversal guards),
   `GET /api/overlays/universe` for the UI picker; strategy reports now
   carry `run_type: "strategy"`.
+- V2-M5: OVERLAYS deck in the catfu SPA — asset-class-grouped symbol
+  chips (≤10), run console with stage LEDs, a permanent amber model-risk
+  banner rendering the report caveat verbatim, and the yield-vs-assignment
+  results table (premium yield, labeled model p(itm), assignments/rolls,
+  overlay vs buy-and-hold OOS Sharpe with the Δ column always prominent,
+  upside forgone, bootstrap verdict pills) with sort controls, honest
+  empty/zero states, per-structure summary strip, and CSV download;
+  run-type routing via report.run_type with a localStorage registry.
 
 ### Changed
 

@@ -222,7 +222,7 @@ section:last-of-type { border-bottom: none; }
 .btn:active { transform: translateY(1px); }
 .btn.primary { background: var(--blue); color: var(--cta-ink); border-color: var(--blue); }
 .btn.primary:hover { background: var(--blue-bright); border-color: var(--blue-bright); }
-.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn:disabled, .tinybtn:disabled { opacity: .4; cursor: not-allowed; }
 .btn-row { display: flex; gap: 0; }
 .btn-row .btn { border-left: none; }
 .btn-row .btn:first-child { border-left: 1px solid var(--line-2); }
@@ -354,6 +354,7 @@ input[type="text"]:focus { border-color: var(--blue); }
 .ztable td.num { text-align: right; }
 .ztable td.neg { color: var(--amber); }
 .ztable td.pos { color: var(--green); }
+.ztable td.truncate { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .pill {
   display: inline-block; padding: 3px 8px; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
@@ -364,6 +365,7 @@ input[type="text"]:focus { border-color: var(--blue); }
 .pill.tradeable { color: var(--screen-blue); border-color: var(--blue-dim); }
 .pill.research { color: var(--ink-faint); border-color: var(--line-2); }
 .pill.low-frac { color: var(--amber); border-color: var(--amber); }
+.pill.skipped { color: var(--ink-faint); border-color: var(--line-2); }
 
 /* ============================ FUNNEL VIZ ================================ */
 .funnel-viz { display: flex; flex-direction: column; gap: 2px; margin: 20px 0; }
@@ -471,6 +473,7 @@ footer {
       <button class="navlink" data-target="view-cross"><span class="full">cross-sect</span></button>
       <button class="navlink" data-target="view-regime"><span class="full">regime</span></button>
       <button class="navlink" data-target="view-layers"><span class="full">layers</span></button>
+      <button class="navlink" data-target="view-overlays"><span class="full">overlays</span></button>
     </nav>
     <div class="seg clockseg" id="clock">--:--:--</div>
     <div class="seg">
@@ -643,6 +646,44 @@ footer {
   <div id="layers-content"><div class="empty-state">no completed run selected yet.</div></div>
 </section>
 
+<!-- ======================= 08 OPTIONS OVERLAYS ============================ -->
+<section id="view-overlays" hidden>
+  <div class="section-head">
+    <span class="ord">08</span>
+    <h2>overlays</h2>
+    <span class="desc">defined-risk options overlays vs. buy-and-hold &mdash; yield, model p(itm), and the cost of chasing premium.</span>
+  </div>
+
+  <div class="warning-strip show" id="overlay-caveat-banner" style="margin:0 0 20px;">synthetic model prices &mdash; no historical option chains; probabilities are model p(itm), not forecasts.</div>
+
+  <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">
+    <div style="flex:2; min-width:320px;">
+      <div class="lbl" style="margin-bottom:8px;">symbols (max 10)</div>
+      <div id="overlay-symbol-groups"><div class="empty-state">loading universe&hellip;</div></div>
+      <div class="lbl dim" style="margin-top:8px;" id="overlay-selected-count">0 / 10 selected</div>
+    </div>
+
+    <div style="flex:1; min-width:260px;">
+      <button class="btn primary big" id="run-overlays-btn" disabled>run overlays</button>
+      <div style="height:16px"></div>
+      <div class="lbl">pipeline stage</div>
+      <div class="stage-leds" id="overlay-stage-leds"></div>
+      <div class="vu" id="overlay-vu-meter" aria-hidden="true"></div>
+      <div id="overlay-state-line" class="lbl dim" style="margin-top:8px;">state: idle</div>
+      <div id="overlay-error" class="diag" style="display:none; margin-top:8px;"></div>
+    </div>
+  </div>
+
+  <div style="height:24px"></div>
+  <div class="lbl">past overlay runs</div>
+  <div id="overlay-runs-list" style="border:1px solid var(--line); margin-top:8px; max-height:200px; overflow-y:auto;">
+    <div class="empty-state">no overlay runs yet (this browser)</div>
+  </div>
+
+  <div style="height:24px"></div>
+  <div id="overlay-content"><div class="empty-state">no overlay run selected yet.</div></div>
+</section>
+
 </main>
 
 <footer>
@@ -666,10 +707,20 @@ footer {
     selectedRunId: null,
     pollTimer: null,
     mappingTimer: null,
+    overlayUniverse: [],
+    overlaySymbols: [],
+    overlaySelectedRunId: null,
+    overlayPollTimer: null,
+    overlayRunInFlight: false,
   };
 
   var SLIDER_KEYS = ["capital", "risk_tolerance", "time_horizon", "drawdown_tolerance"];
   var PIPELINE_STAGES = ["data", "thresholds", "sweep", "attrition", "sensitivity", "bootstrap", "cross-sectional", "regime", "layers", "correlation", "screen", "report", "done"];
+  var OVERLAY_STAGES = ["data", "sweep", "report", "done"];
+  var OVERLAY_STRUCTURES = ["covered_call", "cash_secured_put", "vertical_spread", "leaps"];
+  var OVERLAY_SYMBOLS_CAP = 10;
+  var OVERLAY_CAVEAT_DEFAULT = "synthetic model prices — no historical option chains; probabilities are model p(itm), not forecasts.";
+  var OVERLAY_REGISTRY_KEY = "funnel-overlay-run-ids";
 
   // ---------------------------------------------------------------- utils
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -709,6 +760,30 @@ footer {
     container.appendChild(el("div", { class: "diag" }, [document.createTextNode(msg)]));
   }
 
+  // ------------------------------------------------------- overlay run registry
+  // /api/runs rows carry no run_type (status.json predates the overlay run
+  // type), so a run's type is only knowable once its report.json is fetched
+  // (report.run_type is always present there). This localStorage registry
+  // remembers every run_id resolved as "overlay" — either because this
+  // browser started it via POST /api/overlays, or because its report was
+  // fetched at least once and turned out to be an overlay run — so the past-
+  // runs lists can route/label it correctly without re-fetching. A run never
+  // opened in this browser is simply unresolved until first opened; that is
+  // the documented, honest limit of this approach.
+  function loadOverlayRegistry() {
+    try { return JSON.parse(localStorage.getItem(OVERLAY_REGISTRY_KEY) || "[]"); } catch (e) { return []; }
+  }
+  function markOverlayRun(runId) {
+    var ids = loadOverlayRegistry();
+    if (ids.indexOf(runId) === -1) {
+      ids.push(runId);
+      try { localStorage.setItem(OVERLAY_REGISTRY_KEY, JSON.stringify(ids)); } catch (e) {}
+    }
+  }
+  function isKnownOverlayRun(runId) {
+    return loadOverlayRegistry().indexOf(runId) !== -1;
+  }
+
   // ---------------------------------------------------------------- clock
   function tickClock() {
     var now = new Date();
@@ -733,7 +808,7 @@ footer {
   applyTheme(document.documentElement.getAttribute("data-theme") || "dark");
 
   // ---------------------------------------------------------------- nav
-  var VIEWS = ["view-profile", "view-run", "view-funnel", "view-robustness", "view-cross", "view-regime", "view-layers"];
+  var VIEWS = ["view-profile", "view-run", "view-funnel", "view-robustness", "view-cross", "view-regime", "view-layers", "view-overlays"];
   function showView(target) {
     VIEWS.forEach(function (id) {
       var section = document.getElementById(id);
@@ -932,10 +1007,10 @@ footer {
   setSliders(state.sliders);
 
   // ================================================================= RUNS
-  function buildStageLeds() {
-    var container = $("#stage-leds");
+  function buildStageLeds(containerSel, stages) {
+    var container = $(containerSel);
     container.innerHTML = "";
-    PIPELINE_STAGES.forEach(function (stage) {
+    stages.forEach(function (stage) {
       var item = el("div", { class: "stage-led-item", "data-stage": stage }, [
         el("span", { class: "led off" }),
         el("span", { text: stage }),
@@ -943,12 +1018,13 @@ footer {
       container.appendChild(item);
     });
   }
-  buildStageLeds();
+  buildStageLeds("#stage-leds", PIPELINE_STAGES);
+  buildStageLeds("#overlay-stage-leds", OVERLAY_STAGES);
 
-  function updateStageLeds(currentStage) {
+  function updateStageLeds(containerSel, stages, currentStage) {
     var seenIndex = -1;
-    PIPELINE_STAGES.forEach(function (s, i) { if (currentStage.indexOf(s) !== -1) seenIndex = i; });
-    $all(".stage-led-item").forEach(function (item, i) {
+    stages.forEach(function (s, i) { if (currentStage.indexOf(s) !== -1) seenIndex = i; });
+    $all(".stage-led-item", $(containerSel)).forEach(function (item, i) {
       var led = item.querySelector(".led");
       item.classList.remove("active", "done");
       led.className = "led off";
@@ -957,8 +1033,9 @@ footer {
     });
   }
 
-  function renderVu(running) {
-    var vu = $("#vu-meter");
+  var vuTimers = {};
+  function renderVu(sel, running) {
+    var vu = $(sel);
     vu.innerHTML = "";
     var n = 24;
     var lit = running ? Math.floor(Math.random() * n) : 0;
@@ -972,15 +1049,15 @@ footer {
       vu.appendChild(el("div", { class: cls }));
     }
   }
-  renderVu(false);
-  var vuTimer = null;
-  function startVu() {
-    if (vuTimer || REDUCED_MOTION) return;
-    vuTimer = setInterval(function () { renderVu(true); }, 140);
+  renderVu("#vu-meter", false);
+  renderVu("#overlay-vu-meter", false);
+  function startVu(sel) {
+    if (vuTimers[sel] || REDUCED_MOTION) return;
+    vuTimers[sel] = setInterval(function () { renderVu(sel, true); }, 140);
   }
-  function stopVu() {
-    if (vuTimer) { clearInterval(vuTimer); vuTimer = null; }
-    renderVu(false);
+  function stopVu(sel) {
+    if (vuTimers[sel]) { clearInterval(vuTimers[sel]); vuTimers[sel] = null; }
+    renderVu(sel, false);
   }
 
   $("#run-btn").addEventListener("click", function () {
@@ -1012,7 +1089,7 @@ footer {
 
   function startPolling(runId) {
     if (state.pollTimer) clearInterval(state.pollTimer);
-    startVu();
+    startVu("#vu-meter");
     poll(runId);
     state.pollTimer = setInterval(function () { poll(runId); }, 1000);
   }
@@ -1023,16 +1100,16 @@ footer {
       return r.json();
     }).then(function (status) {
       $("#run-state-line").textContent = "state: " + status.state + " (" + status.stage + ")";
-      updateStageLeds(status.stage);
+      updateStageLeds("#stage-leds", PIPELINE_STAGES, status.stage);
       if (status.state === "error") {
         clearInterval(state.pollTimer);
-        stopVu();
+        stopVu("#vu-meter");
         $("#run-btn").disabled = false;
         $("#run-error").style.display = "block";
         $("#run-error").textContent = "run " + runId + " failed: " + (status.error || "unknown error");
       } else if (status.state === "done") {
         clearInterval(state.pollTimer);
-        stopVu();
+        stopVu("#vu-meter");
         $("#run-btn").disabled = false;
         loadRunsList();
         loadReport(runId);
@@ -1060,6 +1137,7 @@ footer {
     container.innerHTML = "";
     if (!state.runs.length) {
       container.appendChild(el("div", { class: "empty-state", text: "no runs yet" }));
+      renderOverlayRunsList();
       return;
     }
     state.runs.forEach(function (run) {
@@ -1074,36 +1152,61 @@ footer {
         state.selectedRunId = run.run_id;
         renderRunsList();
         if (run.state === "done") {
-          loadReport(run.run_id);
-          showView("view-funnel");
+          loadReport(run.run_id, { switchView: true });
         } else if (run.state === "running" || run.state === "queued") {
-          startPolling(run.run_id);
-          showView("view-run");
+          if (isKnownOverlayRun(run.run_id)) {
+            startOverlayPolling(run.run_id);
+            showView("view-overlays");
+          } else {
+            startPolling(run.run_id);
+            showView("view-run");
+          }
         } else if (run.state === "error") {
-          $("#run-error").style.display = "block";
-          $("#run-error").textContent = "run " + run.run_id + " failed: " + (run.error || "unknown error");
-          showView("view-run");
+          if (isKnownOverlayRun(run.run_id)) {
+            $("#overlay-error").style.display = "block";
+            $("#overlay-error").textContent = "run " + run.run_id + " failed: " + (run.error || "unknown error");
+            showView("view-overlays");
+          } else {
+            $("#run-error").style.display = "block";
+            $("#run-error").textContent = "run " + run.run_id + " failed: " + (run.error || "unknown error");
+            showView("view-run");
+          }
         }
       });
       container.appendChild(item);
     });
+    renderOverlayRunsList();
   }
   loadRunsList();
 
   // =============================================================== REPORT
   var currentReport = null;
 
-  function loadReport(runId) {
+  function loadReport(runId, opts) {
+    opts = opts || {};
     fetch("/api/runs/" + runId + "/report").then(function (r) {
       if (!r.ok) throw new Error("status " + r.status);
       return r.json();
     }).then(function (report) {
+      // report.run_type is the only reliable place a run's type lives
+      // (status.json / GET /api/runs rows predate the overlay run type and
+      // carry no such field) — so this is the single dispatch point that
+      // routes a fetched report to the overlay renderer or the funnel/
+      // robustness/cross/regime/layers renderers.
+      if (report.run_type === "overlay") {
+        markOverlayRun(runId);
+        renderOverlaySection(report);
+        renderOverlayRunsList();
+        if (opts.switchView) showView("view-overlays");
+        return;
+      }
       currentReport = report;
       renderFunnelSection(report);
       renderRobustnessSection(report);
       renderCrossSection(report);
       renderRegimeSection(report);
       renderLayersSection(report);
+      if (opts.switchView) showView("view-funnel");
     }).catch(function (err) {
       var msg = apiError("report fetch failed", err);
       setDiag($("#funnel-content"), msg);
@@ -1111,6 +1214,7 @@ footer {
       setDiag($("#cross-content"), msg);
       setDiag($("#regime-content"), msg);
       setDiag($("#layers-content"), msg);
+      setDiag($("#overlay-content"), msg);
     });
   }
 
@@ -1504,6 +1608,295 @@ footer {
 
     container.appendChild(el("div", { style: "margin-top:16px;" }, [csvChip(runId, "correlation_matrix.csv")]));
   }
+
+  // ================================================================ OVERLAYS
+  // Setup row (symbol picker + run button + stage/status readout), the
+  // permanent model-risk banner, and the results table are all owned by
+  // this block. Past-runs list rendering for overlay runs specifically
+  // (renderOverlayRunsList) is called from the shared renderRunsList()
+  // above, since both lists read the same state.runs.
+
+  function updateOverlayBanner(text) {
+    $("#overlay-caveat-banner").textContent = text;
+  }
+
+  function loadOverlayUniverse() {
+    fetch("/api/overlays/universe").then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.json();
+    }).then(function (universe) {
+      state.overlayUniverse = universe;
+      renderOverlaySymbolPicker();
+    }).catch(function (err) {
+      setDiag($("#overlay-symbol-groups"), apiError("loading overlay universe failed", err));
+    });
+  }
+
+  function renderOverlaySymbolPicker() {
+    var container = $("#overlay-symbol-groups");
+    container.innerHTML = "";
+    if (!state.overlayUniverse.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "zero symbols available in the overlay universe." }));
+      return;
+    }
+    var groups = {};
+    var order = [];
+    state.overlayUniverse.forEach(function (spec) {
+      if (!groups[spec.asset_class]) { groups[spec.asset_class] = []; order.push(spec.asset_class); }
+      groups[spec.asset_class].push(spec.symbol);
+    });
+    var atCap = state.overlaySymbols.length >= OVERLAY_SYMBOLS_CAP;
+    order.forEach(function (assetClass) {
+      var group = el("div", { style: "margin-bottom:10px;" });
+      group.appendChild(el("div", { class: "lbl dim", style: "margin-bottom:4px;", text: assetClass.replace(/_/g, " ") }));
+      var chipRow = el("div", { style: "display:flex; flex-wrap:wrap; gap:6px;" });
+      groups[assetClass].forEach(function (symbol) {
+        var selected = state.overlaySymbols.indexOf(symbol) !== -1;
+        var btn = el("button", { class: "tinybtn" + (selected ? " on" : ""), type: "button", text: symbol });
+        if (!selected && atCap) btn.disabled = true;
+        btn.addEventListener("click", function () { toggleOverlaySymbol(symbol); });
+        chipRow.appendChild(btn);
+      });
+      group.appendChild(chipRow);
+      container.appendChild(group);
+    });
+  }
+
+  function toggleOverlaySymbol(symbol) {
+    var idx = state.overlaySymbols.indexOf(symbol);
+    if (idx !== -1) {
+      state.overlaySymbols.splice(idx, 1);
+    } else {
+      if (state.overlaySymbols.length >= OVERLAY_SYMBOLS_CAP) return;
+      state.overlaySymbols.push(symbol);
+    }
+    renderOverlaySymbolPicker();
+    updateOverlaySelectionState();
+  }
+
+  function updateOverlaySelectionState() {
+    $("#overlay-selected-count").textContent = state.overlaySymbols.length + " / " + OVERLAY_SYMBOLS_CAP + " selected";
+    $("#run-overlays-btn").disabled = state.overlaySymbols.length === 0 || state.overlayRunInFlight;
+  }
+
+  $("#run-overlays-btn").addEventListener("click", function () {
+    if (!state.overlaySymbols.length || state.overlayRunInFlight) return;
+    state.overlayRunInFlight = true;
+    updateOverlaySelectionState();
+    $("#overlay-error").style.display = "none";
+    fetch("/api/overlays", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbols: state.overlaySymbols.slice() })
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || ("status " + r.status)); });
+      return r.json();
+    }).then(function (data) {
+      markOverlayRun(data.run_id);
+      state.overlaySelectedRunId = data.run_id;
+      showView("view-overlays");
+      startOverlayPolling(data.run_id);
+      loadRunsList();
+    }).catch(function (err) {
+      state.overlayRunInFlight = false;
+      updateOverlaySelectionState();
+      $("#overlay-error").style.display = "block";
+      $("#overlay-error").textContent = apiError("failed to start overlay run", err);
+    });
+  });
+
+  function startOverlayPolling(runId) {
+    if (state.overlayPollTimer) clearInterval(state.overlayPollTimer);
+    startVu("#overlay-vu-meter");
+    overlayPoll(runId);
+    state.overlayPollTimer = setInterval(function () { overlayPoll(runId); }, 1000);
+  }
+
+  function overlayPoll(runId) {
+    fetch("/api/runs/" + runId + "/status").then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.json();
+    }).then(function (status) {
+      $("#overlay-state-line").textContent = "state: " + status.state + " (" + status.stage + ")";
+      updateStageLeds("#overlay-stage-leds", OVERLAY_STAGES, status.stage);
+      if (status.state === "error") {
+        clearInterval(state.overlayPollTimer);
+        stopVu("#overlay-vu-meter");
+        state.overlayRunInFlight = false;
+        updateOverlaySelectionState();
+        $("#overlay-error").style.display = "block";
+        $("#overlay-error").textContent = "run " + runId + " failed: " + (status.error || "unknown error");
+      } else if (status.state === "done") {
+        clearInterval(state.overlayPollTimer);
+        stopVu("#overlay-vu-meter");
+        state.overlayRunInFlight = false;
+        updateOverlaySelectionState();
+        loadRunsList();
+        loadReport(runId, { switchView: true });
+      }
+    }).catch(function (err) {
+      $("#overlay-error").style.display = "block";
+      $("#overlay-error").textContent = apiError("status poll failed", err);
+    });
+  }
+
+  function renderOverlayRunsList() {
+    var container = $("#overlay-runs-list");
+    container.innerHTML = "";
+    var ids = loadOverlayRegistry();
+    var rows = state.runs.filter(function (r) { return ids.indexOf(r.run_id) !== -1; });
+    if (!rows.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "no overlay runs yet (this browser)" }));
+      return;
+    }
+    rows.forEach(function (run) {
+      var stateColor = run.state === "done" ? "var(--green)" : run.state === "error" ? "var(--amber)" : "var(--screen-blue)";
+      var item = el("div", { class: "runs-list-item" + (run.run_id === state.overlaySelectedRunId ? " selected" : "") }, [
+        el("span", { text: run.run_id }),
+        el("span", { style: "color:" + stateColor, text: run.state }),
+        el("span", { class: "lbl dim", text: run.stage || "" }),
+        el("span", { class: "lbl dim", text: run.started_at ? run.started_at.slice(11, 19) : "" }),
+      ]);
+      item.addEventListener("click", function () {
+        state.overlaySelectedRunId = run.run_id;
+        renderOverlayRunsList();
+        if (run.state === "done") {
+          loadReport(run.run_id, { switchView: true });
+        } else if (run.state === "running" || run.state === "queued") {
+          startOverlayPolling(run.run_id);
+        } else if (run.state === "error") {
+          $("#overlay-error").style.display = "block";
+          $("#overlay-error").textContent = "run " + run.run_id + " failed: " + (run.error || "unknown error");
+        }
+      });
+      container.appendChild(item);
+    });
+  }
+
+  function overlaySortComparator(key) {
+    return function (a, b) {
+      var av = a[key], bv = b[key];
+      var aNan = (av === null || av === undefined || isNaN(av));
+      var bNan = (bv === null || bv === undefined || isNaN(bv));
+      if (aNan && bNan) return 0;
+      if (aNan) return 1;
+      if (bNan) return -1;
+      return bv - av;
+    };
+  }
+
+  var overlaySortKey = "premium_collected_annualized";
+
+  function renderOverlaySection(report) {
+    updateOverlayBanner(report.model_risk_caveat);
+    var container = $("#overlay-content");
+    container.innerHTML = "";
+    var runId = report.run_id;
+    var rows = report.overlay_rows || [];
+
+    container.appendChild(el("div", {
+      class: "lbl", style: "margin-bottom:8px;",
+      text: "transparency: " + report.transparency.n_configs + " configs × " + report.transparency.n_symbols + " symbols = " + report.transparency.n_total + " overlay backtests"
+    }));
+
+    if (report.warnings && report.warnings.length) {
+      var wwrap = el("div", { style: "margin-bottom:16px;" });
+      report.warnings.forEach(function (w) { wwrap.appendChild(el("div", { class: "diag", style: "margin-bottom:6px;", text: w })); });
+      container.appendChild(wwrap);
+    }
+
+    if (!rows.length) {
+      container.appendChild(el("div", { class: "empty-state", text: "zero overlay backtests: every requested symbol was filtered out (insufficient history), or no symbols were eligible. this is a valid, honest result." }));
+      return;
+    }
+
+    // per-structure summary strip: mean Δ vs hold (non-skipped rows only)
+    var summaryPanel = el("div", { class: "crt", style: "margin-bottom:20px;" });
+    summaryPanel.appendChild(el("div", { class: "crt-title", text: "per-structure Δ vs hold (mean, non-skipped)" }));
+    OVERLAY_STRUCTURES.forEach(function (structure) {
+      var structRows = rows.filter(function (r) { return r.structure === structure && !r.skipped; });
+      var meanDelta = structRows.length
+        ? structRows.reduce(function (acc, r) { return acc + r.oos_sharpe_vs_hold; }, 0) / structRows.length
+        : null;
+      summaryPanel.appendChild(el("div", { class: "crt-row" }, [
+        el("span", { class: "k", text: structure.replace(/_/g, " ") }),
+        el("span", { text: meanDelta === null ? "n/a" : fmtNum(meanDelta, 3) }),
+      ]));
+    });
+    container.appendChild(summaryPanel);
+
+    // sort controls — default premium yield desc; Δ vs hold column always stays visible regardless.
+    var sortRow = el("div", { class: "btn-row", style: "margin-bottom:12px;" });
+    [
+      { key: "premium_collected_annualized", label: "sort: yield" },
+      { key: "oos_sharpe_vs_hold", label: "sort: Δ vs hold" },
+      { key: "mean_model_prob_itm", label: "sort: p(itm)" },
+    ].forEach(function (opt) {
+      var btn = el("button", { class: "tinybtn" + (overlaySortKey === opt.key ? " on" : ""), type: "button", text: opt.label });
+      btn.addEventListener("click", function () {
+        overlaySortKey = opt.key;
+        renderOverlaySection(report);
+      });
+      sortRow.appendChild(btn);
+    });
+    container.appendChild(sortRow);
+
+    var sorted = rows.slice().sort(overlaySortComparator(overlaySortKey));
+    var cols = [
+      ["structure", "structure"],
+      ["symbol", "symbol"],
+      ["spec_params", "params"],
+      ["premium_collected_annualized", "yield (ann.)"],
+      ["mean_model_prob_itm", "model p(itm)"],
+      ["n_assignments", "assignments"],
+      ["n_rolls", "rolls"],
+      ["overlay_oos_sharpe", "overlay oos sharpe"],
+      ["underlying_oos_sharpe", "hold oos sharpe"],
+      ["oos_sharpe_vs_hold", "Δ vs hold"],
+      ["overlay_oos_max_drawdown", "oos max dd"],
+      ["upside_forgone", "upside forgone"],
+    ];
+    var table = el("table", { class: "ztable" });
+    var headCells = cols.map(function (c) { return el("th", { text: c[1] }); });
+    headCells.push(el("th", { text: "verdict" }));
+    table.appendChild(el("thead", {}, [el("tr", {}, headCells)]));
+    var tbody = el("tbody");
+    sorted.forEach(function (row) {
+      var tr = el("tr");
+      cols.forEach(function (pair) {
+        var key = pair[0];
+        var v = row[key];
+        var cls, text, td;
+        if (key === "structure" || key === "symbol") {
+          td = el("td", { text: v });
+        } else if (key === "spec_params") {
+          td = el("td", { class: "truncate", text: v });
+          td.title = v || "";
+        } else if (key === "n_assignments" || key === "n_rolls") {
+          td = el("td", { class: "num", text: fmtNum(v, 0) });
+        } else if (key === "premium_collected_annualized" || key === "mean_model_prob_itm" || key === "upside_forgone") {
+          td = el("td", { class: "num", text: fmtPct(v) });
+        } else if (key === "overlay_oos_max_drawdown") {
+          td = el("td", { class: "num" + (v < 0 ? " neg" : " pos"), text: fmtPct(v) });
+        } else {
+          td = el("td", { class: "num" + (v < 0 ? " neg" : " pos"), text: fmtNum(v, 3) });
+        }
+        tr.appendChild(td);
+      });
+      var verdictTd = el("td");
+      verdictTd.appendChild(el("span", { class: "pill " + row.bootstrap_verdict, text: row.bootstrap_verdict }));
+      tr.appendChild(verdictTd);
+      if (row.skipped) tr.style.opacity = "0.55";
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    container.appendChild(table);
+
+    container.appendChild(el("div", { style: "margin-top:16px;" }, [csvChip(runId, "overlay_results.csv")]));
+  }
+
+  updateOverlayBanner(OVERLAY_CAVEAT_DEFAULT);
+  loadOverlayUniverse();
+  updateOverlaySelectionState();
 
 })();
 </script>
