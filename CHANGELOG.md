@@ -156,3 +156,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the entire `engine/src/funnel/data/` package (DataSource protocol,
   yfinance source, cache, universe) from version control since M1; the
   package is now actually tracked.
+- Zero-backtest runs on DNS-filtered networks diagnosed and documented:
+  `fc.yahoo.com` (yfinance's cookie-bootstrap host) is on common DNS
+  blocklists; when sinkholed, every fetch returns empty and the pipeline
+  honestly reports a zero-asset run. `compose.yaml` now carries a commented
+  `extra_hosts` stopgap and the durable fix (DNS whitelist) is documented in
+  `docs/OPEN_ITEMS.md`. First real-data run verified end-to-end: 31 assets,
+  4650 backtests, 10 survivors.

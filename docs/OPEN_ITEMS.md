@@ -3,11 +3,28 @@
 Known gaps and deferred work, stated plainly per the honesty-by-design principle in
 `PLAN.md` — nothing here is hidden or silently worked around.
 
-- **Real yfinance data path is untested end-to-end.** This dev environment has no
-  outbound network access, so the full pipeline has only been verified against
-  `FUNNEL_FAKE_DATA=1` (`SyntheticSource`). The first real run against live yfinance
-  data (real universe fetch, `CachedSource` parquet caching, rate limits/outages)
-  should be watched manually before being trusted unattended.
+- **Real yfinance data path is now verified end-to-end (resolved), with one
+  network caveat.** A watched "Retirement Core" run inside the compose container
+  fetched all 31 assets and completed 4650 real backtests (2217 positive OOS →
+  596 cleared the Sharpe floor → 10 survivors, no warnings). Caveat discovered
+  on the way: yfinance bootstraps its auth cookie from `fc.yahoo.com`, which is
+  on common DNS-blocklist feeds — on this LAN the resolver sinkholes it to
+  `0.0.0.0`, every fetch returns empty, and the pipeline honestly reports a
+  zero-asset run. Its fallback "csrf" consent flow yields no token from US IPs,
+  so both yfinance cookie strategies dead-end when that host is blocked.
+  Durable fix: whitelist `fc.yahoo.com` in the DNS blocker; stopgap: the
+  commented `extra_hosts` pin in `compose.yaml`. The `YFinanceSource` csrf
+  fallback (with offline tests) remains as belt-and-braces for networks where
+  csrf works.
+- **The host's docker CLI dispatch is currently broken (OrbStack, machine-level,
+  not this repo).** After an OrbStack update/handoff on 2026-07-07, the
+  `docker-tools` multiplexer answers as Docker Compose ("v5.3.0") for every
+  personality (`docker`, `docker-buildx`, `docker-compose`), so `docker build`
+  / `docker compose` fail with mangled-argument errors while the daemon itself
+  is healthy (Engine 29.4.0 answers on `~/.orbstack/run/docker.sock`; this
+  repo's image was rebuilt via the daemon REST API as a workaround). An app
+  restart didn't clear it; `orbctl update` opened the GUI updater — completing
+  that update (or reinstalling OrbStack) should restore the CLI.
 - **Options overlay (PRD §11.3) is deferred to v2.** A user decision — v1 keeps a
   pluggable strategy/instrument seam but implements nothing options-specific.
 - **Intraday is unsupported in v1.** Only EOD data is fetched/backtested; slider
