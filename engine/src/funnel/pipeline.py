@@ -113,6 +113,20 @@ OVERLAY_MODEL_RISK_CAVEAT = (
 """One-paragraph, always-displayed model-risk caveat for overlay runs
 (PLAN.md "v2 — Options Overlay Module", modeling ground rules)."""
 
+REGIME_COMPARISON_CAVEAT = (
+    "change_point is evaluated on a trailing 1000-trading-day window for "
+    "tractability while hmm, ma_filter, and realized_vol use full history, "
+    "so part of any disagreement in the comparison and agreement tables "
+    "below can be a window-length artifact rather than a genuine "
+    "difference in regime detection; routing and regime-conditioned "
+    "performance use hmm only."
+)
+"""Always-displayed disclosure for the regime detector-comparison table:
+the four detectors are not evaluated on equal windows (see
+``ChangePointDetector(max_window=1000)`` above), so a side-by-side
+comparison/agreement table without this caveat would misrepresent
+disagreement as purely a detection difference."""
+
 
 def _default_progress(message: str) -> None:
     logger.info(message)
@@ -471,6 +485,7 @@ def run_pipeline(
         },
         "regime": {
             "comparison": _records(regime_comparison_df),
+            "comparison_caveat": REGIME_COMPARISON_CAVEAT,
             "agreement_matrix": _json_safe(agreement_df.to_dict(orient="index"))
             if not agreement_df.empty
             else {},

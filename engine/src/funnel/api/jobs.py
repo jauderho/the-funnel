@@ -17,6 +17,7 @@ at the next (config, asset) iteration (``should_stop()`` checked directly).
 
 import json
 import logging
+import os
 import re
 import threading
 from collections.abc import Callable
@@ -59,6 +60,13 @@ class JobStatus:
     error: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
+    pid: int | None = None
+    """OS pid of the process that submitted this run, recorded by ``submit``
+    and carried forward by every later ``_update``. Used only as a liveness
+    signal when a *different* process's ``JobRegistry`` finds this run's
+    ``status.json`` on disk with ``state == "running"`` and no matching
+    in-memory entry (see ``_pid_alive`` / ``_scan_disk_locked``). ``None``
+    for legacy status files written before this field existed."""
 
 
 def _write_status(run_dir: Path, status: JobStatus) -> None:
@@ -67,6 +75,36 @@ def _write_status(run_dir: Path, status: JobStatus) -> None:
     tmp_path = path.with_suffix(".json.tmp")
     tmp_path.write_text(json.dumps(asdict(status), indent=2))
     tmp_path.replace(path)
+
+
+def _pid_alive(pid: int) -> bool:
+    """Best-effort, same-host liveness check for a status.json's ``pid``.
+
+    ``os.kill(pid, 0)`` sends no signal — it only asks the OS whether ``pid``
+    currently names a process: ``ProcessLookupError`` means it does not
+    (dead); a successful call or a ``PermissionError`` (a process with that
+    pid exists but is owned by another user) both mean a process with that
+    pid is alive right now.
+
+    Caveat, deliberately: this is same-host only, and pids are recycled by
+    the OS after a process exits. With a runs dir shared across hosts or
+    containers (e.g. a mounted volume), a foreign pid cannot be checked
+    against this host's process table at all, and even on one host a dead
+    process's old pid may already belong to something new. Both failure
+    modes point the same direction — this function may report a truly-dead
+    run as "alive". That is intentional: the caller treats "alive" as "leave
+    the run's status untouched", so the failure mode of this best-effort
+    check is a stale-but-harmless "running" status that a human eventually
+    notices, never a live run getting falsely overwritten with "error".
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    else:
+        return True
 
 
 class JobRegistry:
@@ -80,6 +118,12 @@ class JobRegistry:
         self._cancel_events: dict[str, threading.Event] = {}
         self._started: set[str] = set()
         self._disk_scanned = False
+        self._foreign_running: set[str] = set()
+        """run_ids of on-disk ``"running"`` statuses that belong to another
+        process and look alive (``_pid_alive`` true, or unknown). These are
+        deliberately never cached in ``self._statuses`` — see
+        ``_classify_on_disk_running`` — so ``get``/``list_all`` re-read their
+        status.json on every call for as long as they remain in this set."""
 
     def submit(
         self,
@@ -99,7 +143,9 @@ class JobRegistry:
         if not _RUN_ID_RE.match(run_id):
             raise ValueError(f"invalid run_id {run_id!r}")
         run_dir = self._runs_dir / run_id
-        status = JobStatus(run_id=run_id, state="queued", stage="queued", run_type=run_type)
+        status = JobStatus(
+            run_id=run_id, state="queued", stage="queued", run_type=run_type, pid=os.getpid()
+        )
         cancel_event = threading.Event()
         with self._lock:
             self._statuses[run_id] = status
@@ -257,7 +303,12 @@ class JobRegistry:
 
         A status found on disk this way is cached into the in-memory dict
         before being returned, so a repeated lookup of the same unknown id
-        does not re-read the file every time.
+        does not re-read the file every time — *unless* the on-disk status
+        is ``"running"`` and belongs to another process that looks alive
+        (see ``_classify_on_disk_running``): such a status is never
+        permanently cached, so every ``get()`` call re-reads it from disk
+        until it stops being ``"running"``. That is the only case that pays
+        a repeated disk read.
 
         Returns ``None`` (never raises) for a malformed ``run_id`` — the
         in-memory registry simply won't have an entry for it, and the
@@ -270,10 +321,14 @@ class JobRegistry:
             return status
         if not _RUN_ID_RE.match(run_id):
             return None
-        on_disk = _read_status(self._runs_dir / run_id)
+        run_dir = self._runs_dir / run_id
+        on_disk = _read_status(run_dir)
         if on_disk is None:
             return None
         with self._lock:
+            if on_disk.state == "running":
+                return self._classify_on_disk_running(run_dir, on_disk)
+            self._foreign_running.discard(run_id)
             status = self._statuses.setdefault(run_id, on_disk)
         return status
 
@@ -281,20 +336,39 @@ class JobRegistry:
         """List every known run: in-memory jobs plus any on-disk statuses not yet in memory.
 
         The runs dir is scanned exactly once, on the first call — every
-        subsequent call serves entirely from memory. All in-process status
-        changes already flow through ``_update``, so re-scanning disk on
-        every ~1s UI poll would be pure waste; the only statuses that can
-        exist on disk and not in memory are from a previous process. A
-        ``"running"`` status found during that one-time scan is therefore
-        necessarily stale (its process is gone and will never finish it), so
-        it is corrected to ``"error"`` here rather than left to look like a
-        run in progress forever.
+        subsequent call serves entirely from memory, EXCEPT for runs
+        classified as "foreign running" during that scan (see
+        ``_classify_on_disk_running``): a foreign, live-looking "running"
+        status is re-read from disk on every ``list_all`` call for as long
+        as it remains "running", since it belongs to another process and
+        may still be updating. This bounded extra cost (one disk read per
+        foreign-running run per call) is the price of never permanently
+        caching — and thereby freezing — a possibly-live run's status.
+
+        All other on-disk "running" statuses found during the scan (no
+        recorded pid, or a pid that is provably dead — see ``_pid_alive``)
+        are necessarily stale and are corrected to ``"error"`` immediately,
+        as before.
         """
         with self._lock:
             if not self._disk_scanned:
                 self._scan_disk_locked()
                 self._disk_scanned = True
             statuses = dict(self._statuses)
+            foreign_ids = list(self._foreign_running)
+
+        for run_id in foreign_ids:
+            run_dir = self._runs_dir / run_id
+            on_disk = _read_status(run_dir)
+            if on_disk is None:
+                continue
+            with self._lock:
+                if on_disk.state == "running":
+                    statuses[run_id] = self._classify_on_disk_running(run_dir, on_disk)
+                else:
+                    self._foreign_running.discard(run_id)
+                    self._statuses[run_id] = on_disk
+                    statuses[run_id] = on_disk
 
         return sorted(statuses.values(), key=lambda s: s.run_id, reverse=True)
 
@@ -309,15 +383,50 @@ class JobRegistry:
             if on_disk is None:
                 continue
             if on_disk.state == "running":
-                on_disk = replace(
-                    on_disk,
-                    state="error",
-                    stage="error",
-                    error="process restarted mid-run",
-                    finished_at=datetime.now(UTC).isoformat(),
-                )
-                _write_status(run_dir, on_disk)
+                self._classify_on_disk_running(run_dir, on_disk)
+                continue
             self._statuses[run_dir.name] = on_disk
+
+    def _classify_on_disk_running(self, run_dir: Path, on_disk: JobStatus) -> JobStatus:
+        """Classify one on-disk ``"running"`` status not present in memory.
+
+        Caller must hold ``self._lock``. Two registry instances (e.g.
+        ``uvicorn --workers>1``, or two containers) may share one runs dir;
+        a "running" status found on disk with no matching in-memory entry
+        could be this process's own dead predecessor, OR a run that is
+        genuinely in progress right now in a sibling process. Distinguishing
+        those without a shared liveness channel is exactly what ``pid`` +
+        ``_pid_alive`` is for:
+
+        - No recorded pid (legacy status file), or a pid that is provably
+          dead on this host: the run is stale. Corrected to ``"error"``,
+          written back to disk, and cached permanently in memory — the
+          original recovery behavior.
+        - A pid that looks alive (or can't be checked, e.g. a different
+          host): the run might genuinely still be running. Left completely
+          untouched on disk and NOT cached in ``self._statuses`` (that would
+          freeze its status at whatever this one glance saw); instead its
+          run_id is recorded in ``self._foreign_running`` so ``get``/
+          ``list_all`` re-read it from disk on every future call while it
+          remains "running". This is the safe direction: a live run is
+          never falsely overwritten with "error", at the cost that a truly
+          dead run with a since-recycled pid can appear "running" until a
+          human notices — the lesser evil.
+        """
+        if on_disk.pid is None or not _pid_alive(on_disk.pid):
+            corrected = replace(
+                on_disk,
+                state="error",
+                stage="error",
+                error="process restarted mid-run",
+                finished_at=datetime.now(UTC).isoformat(),
+            )
+            _write_status(run_dir, corrected)
+            self._statuses[run_dir.name] = corrected
+            self._foreign_running.discard(run_dir.name)
+            return corrected
+        self._foreign_running.add(run_dir.name)
+        return on_disk
 
 
 def _read_status(run_dir: Path) -> JobStatus | None:
@@ -333,4 +442,5 @@ def _read_status(run_dir: Path) -> JobStatus | None:
         error=data.get("error"),
         started_at=data.get("started_at"),
         finished_at=data.get("finished_at"),
+        pid=data.get("pid"),
     )

@@ -222,7 +222,7 @@ def _score_overlay_pair(
         result = simulate_overlay(df, config.spec, vol_config, costs, rate)
         overlay_score = score_overlay(result.returns, wf)
         underlying_score = score_overlay(result.underlying_returns, wf)
-    except UndefinedRiskError, InsufficientHistoryError:
+    except (UndefinedRiskError, InsufficientHistoryError):  # fmt: skip
         return _skipped_row(config, symbol)
 
     bootstrap = bootstrap_stress(

@@ -210,6 +210,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   all routing/conditioning); set `max_window=None` to restore the old
   behavior. Bootstrap left as-is (measured ~1 s, not worth touching).
 
+### Fixed (adversarial review findings)
+
+- CRITICAL — overlay daily returns could fall below -100% (mark-to-model
+  P&L divided by a capital base frozen at cycle entry), silently corrupting
+  Sharpe/drawdown/bootstrap for gapped positions (reproduced at -320%/day
+  with shipped LEAPS grid params; the old vertical-spread test even pinned
+  a -267.6% cycle "return" as correct). Overlay returns now use
+  within-cycle equity compounding — `cumprod(1+r)` reproduces the true
+  dollar equity path exactly (verified against an independent re-derivation
+  to ~1e-16), every daily return ≥ -100%, with a documented dead-position
+  floor for near-zero equity. NOTE: overlay metrics legitimately shift
+  versus earlier reports — the old numbers were wrong under gaps. New
+  gap-fixture and compounding-identity tests lock the convention in.
+- Job registry: stale-"running" recovery now checks process liveness
+  (`pid` recorded in status.json, `os.kill(pid, 0)` probe, biased toward
+  never falsely erroring a possibly-live run) so a second instance sharing
+  a runs volume cannot poison a live run; foreign running runs are re-read
+  from disk until terminal.
+- Regime report/UI now disclose that the change-point comparator uses a
+  trailing 1000-day window while the other detectors use full history
+  (`comparison_caveat`), so agreement-matrix disagreement is not
+  misread as purely a detection difference.
+- Parenthesized the multi-exception `except` in the overlay sweep (PEP 758
+  comma form is valid but visually ambiguous; `# fmt: skip` guards against
+  ruff format rewriting it back).
+
 ### Fixed (UI batch, user-reported)
 
 - Run rows now carry a run-type chip and route predictably (strategy →

@@ -14,6 +14,9 @@ exception type both the registry and the sweeps use.
 """
 
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -369,6 +372,139 @@ def test_stale_running_status_reported_as_error_on_first_list(tmp_path: Path) ->
     on_disk = json.loads((run_dir / "status.json").read_text())
     assert on_disk["state"] == "error"
     assert on_disk["error"] == "process restarted mid-run"
+
+
+def test_foreign_running_status_with_live_pid_is_never_falsely_errored(tmp_path: Path) -> None:
+    """A "running" status on disk with a provably-alive pid must never be
+    rewritten to "error" (that would poison a live run from another
+    process — Finding A). It must also never be permanently cached, so a
+    later on-disk change is observed rather than served stale."""
+    runs_dir = tmp_path / "runs"
+    run_dir = runs_dir / "live-foreign-run"
+    run_dir.mkdir(parents=True)
+    status_path = run_dir / "status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "run_id": "live-foreign-run",
+                "state": "running",
+                "stage": "stage: sweep",
+                "run_type": "strategy",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "pid": os.getpid(),
+            }
+        )
+    )
+
+    registry = JobRegistry(runs_dir)
+    statuses = registry.list_all()
+
+    assert len(statuses) == 1
+    assert statuses[0].run_id == "live-foreign-run"
+    assert statuses[0].state == "running"
+
+    # The on-disk file itself is left completely untouched.
+    on_disk = json.loads(status_path.read_text())
+    assert on_disk["state"] == "running"
+    assert "error" not in on_disk or on_disk["error"] is None
+
+    # Mutate the file between calls: since a live-looking foreign "running"
+    # run is never permanently cached, the next list_all() must observe it.
+    status_path.write_text(
+        json.dumps(
+            {
+                "run_id": "live-foreign-run",
+                "state": "done",
+                "stage": "done",
+                "run_type": "strategy",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "finished_at": "2026-01-01T00:10:00+00:00",
+                "pid": os.getpid(),
+            }
+        )
+    )
+    statuses_after = registry.list_all()
+    assert len(statuses_after) == 1
+    assert statuses_after[0].state == "done"
+
+    # Now that it resolved to a terminal state, it becomes safe to cache
+    # permanently: a further on-disk mutation is no longer observed.
+    status_path.write_text(
+        json.dumps(
+            {
+                "run_id": "live-foreign-run",
+                "state": "running",
+                "stage": "stage: sweep",
+                "run_type": "strategy",
+                "pid": os.getpid(),
+            }
+        )
+    )
+    statuses_final = registry.list_all()
+    assert statuses_final[0].state == "done"
+
+
+def test_foreign_running_status_with_dead_pid_is_still_marked_error(tmp_path: Path) -> None:
+    """A "running" status on disk whose pid is provably dead is the ordinary
+    stale-recovery case and must still be corrected to "error"."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead_pid = proc.pid
+    proc.wait(timeout=5.0)
+
+    runs_dir = tmp_path / "runs"
+    run_dir = runs_dir / "dead-foreign-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "status.json").write_text(
+        json.dumps(
+            {
+                "run_id": "dead-foreign-run",
+                "state": "running",
+                "stage": "stage: sweep",
+                "run_type": "strategy",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "pid": dead_pid,
+            }
+        )
+    )
+
+    registry = JobRegistry(runs_dir)
+    statuses = registry.list_all()
+
+    assert len(statuses) == 1
+    assert statuses[0].run_id == "dead-foreign-run"
+    assert statuses[0].state == "error"
+    assert statuses[0].error == "process restarted mid-run"
+
+    on_disk = json.loads((run_dir / "status.json").read_text())
+    assert on_disk["state"] == "error"
+    assert on_disk["error"] == "process restarted mid-run"
+
+
+def test_legacy_running_status_without_pid_is_still_marked_error(tmp_path: Path) -> None:
+    """A "running" status on disk with no ``pid`` at all (written before this
+    field existed) has no liveness signal and is treated as stale, same as
+    the pre-existing behavior."""
+    runs_dir = tmp_path / "runs"
+    run_dir = runs_dir / "legacy-running-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "status.json").write_text(
+        json.dumps(
+            {
+                "run_id": "legacy-running-run",
+                "state": "running",
+                "stage": "stage: sweep",
+                "run_type": "strategy",
+                "started_at": "2026-01-01T00:00:00+00:00",
+            }
+        )
+    )
+
+    registry = JobRegistry(runs_dir)
+    statuses = registry.list_all()
+
+    assert len(statuses) == 1
+    assert statuses[0].state == "error"
+    assert statuses[0].error == "process restarted mid-run"
 
 
 # ---------------------------------------------------------------------------

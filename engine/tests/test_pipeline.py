@@ -232,6 +232,19 @@ def test_run_pipeline_progress_callback_invoked_per_stage(
         assert expected_stage in joined
 
 
+def test_run_pipeline_regime_section_includes_comparison_caveat(
+    happy_path_result: PipelineResult,
+) -> None:
+    """The regime section must disclose that change_point is evaluated on a
+    bounded window while the other detectors see full history (Finding B) —
+    otherwise the comparison/agreement tables misrepresent a possible
+    window-length artifact as pure detector disagreement."""
+    regime = happy_path_result.report["regime"]
+    assert "comparison_caveat" in regime
+    assert isinstance(regime["comparison_caveat"], str)
+    assert regime["comparison_caveat"].strip() != ""
+
+
 def test_run_pipeline_with_preset_profile(tmp_path: Path) -> None:
     """Sanity check the pipeline accepts a real shipped preset profile."""
     config = PipelineConfig(

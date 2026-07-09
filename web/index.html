@@ -1568,6 +1568,13 @@ footer {
     var runId = report.run_id;
     var regime = report.regime;
 
+    if (regime.comparison_caveat) {
+      container.appendChild(el("div", {
+        class: "lbl dim", style: "margin-bottom:16px;",
+        text: regime.comparison_caveat
+      }));
+    }
+
     container.appendChild(el("h3", { style: "margin-bottom:10px; font-size:14px;", text: "detector comparison" }));
     if (!regime.comparison.length) {
       container.appendChild(el("div", { class: "empty-state", text: "regime detection skipped (proxy symbol not in universe)." }));
