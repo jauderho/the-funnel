@@ -35,9 +35,7 @@ per PRD §2 this is a hard rejection, never a warning.
 
 CAPITAL BASE & DAILY RETURN CONVENTION (the subtle part — read carefully)
 --------------------------------------------------------------------------
-Every structure's daily return is P&L for the day divided by that
-structure's own **capital base**, so Sharpe/drawdown are comparable across
-structures and against buy-and-hold:
+Each structure's **capital base** is established once per cycle, at entry:
 
 - Covered call: stock value at position entry (spot * 100 * contracts).
 - Cash-secured put: strike * 100 * contracts (the cash reserve).
@@ -50,15 +48,52 @@ The capital base is **re-established at every position transition**
 settlement + re-entry), computed from that transition's own spot/vol. This
 is a deliberate generalization of "at entry" to "at entry of the current
 cycle": a multi-year daily series rolls dozens of times, and re-basing the
-denominator each cycle is the only way to keep cycle P&L / capital-base
-economically meaningful throughout (analogous to how buy-and-hold's daily
-return implicitly re-bases every day using the prior close as the
-denominator — overlays re-base once per roll cycle instead of once per
-day). All costs incurred on a transition day (closing the outgoing
-position and opening its replacement) are charged against the OUTGOING
-position's capital base, since that is the capital economically deployed
-through the close of that trading day; the new position's own capital
-base takes over starting the following day's return.
+capital base each cycle is the only way to keep cycle P&L economically
+meaningful throughout. All costs incurred on a transition day (closing the
+outgoing position and opening its replacement) are charged against the
+OUTGOING position's cycle, since that is the capital economically deployed
+through the close of that trading day; the new position's own cycle takes
+over starting the following day's return.
+
+Daily returns are **within-cycle equity-relative**, not a division by the
+fixed entry capital base. Every structure here is proven loss-bounded (see
+above): the cycle's maximum possible loss equals its capital base, so a
+cycle's running **equity** — capital base plus cumulative net P&L (mark-to-
+model P&L net of costs) through day t — can never fall below 0. Tracking
+that equity explicitly and computing ``return_t = (equity_t -
+equity_{t-1}) / equity_{t-1}`` guarantees every daily return is >= -100%
+by construction, and makes ``cumprod(1 + returns)`` over a cycle reproduce
+the true equity path exactly (the compounding identity). Dividing P&L by
+the fixed entry capital base instead — the original implementation — does
+not have this property: once a position is deep enough in the money that a
+single day's mark-to-model book-value change exceeds the entry capital
+base, the fixed-base quotient can (and did) fall below -100%, which
+``metrics.cumprod``-based Sharpe/drawdown cannot represent (the "equity"
+implied by such a series goes negative and never recovers). Equity-
+relative returns are the fix: they are mathematically equivalent to
+fixed-base division on any day where the day's loss is small relative to
+running equity (the common case), and diverge only when the fixed-base
+version would have been wrong.
+
+Numerical guard (near-zero equity): a cycle's equity can only reach
+exactly 0 in the limiting case (e.g. a LEAPS a hair before expiry, fully
+worthless). Once ``equity_{t-1}`` decays to an economically negligible
+fraction of the cycle's entry capital base (``< _EQUITY_DEAD_FRACTION``,
+1e-6), the position is treated as economically dead for the remainder of
+the cycle: its daily return is pinned to 0.0 and its tracked equity is
+frozen, rather than computing a percentage change against a token-sized
+denominator (which would be a mathematically "faithful" but practically
+meaningless multi-hundred-percent swing off a few cents). This never
+affects a cycle's outcome: a dead position stays at ~0 equity until the
+next roll/re-entry re-bases it, exactly as the (negligible) undamped
+computation would have shown, just without spurious volatility in the
+return series feeding Sharpe.
+
+``premium_collected_annualized`` (see ``OverlayResult``) is a *yield on
+committed capital* statistic, not part of the compounding return series —
+it legitimately keeps the entry capital base as its denominator (net
+premium collected in a cycle, as a fraction of the capital committed to
+put that premium at risk), unaffected by this convention.
 
 MARK-TO-MODEL P&L AND ASSIGNMENT
 --------------------------------------------------------------------------
@@ -112,6 +147,13 @@ from funnel.options.pricing import (
 )
 
 _SHARES_PER_CONTRACT = 100.0
+
+_EQUITY_DEAD_FRACTION = 1e-6
+"""Once a cycle's tracked equity decays below this fraction of the cycle's
+entry capital base, the position is treated as economically dead for the
+rest of the cycle (return pinned to 0.0, equity frozen) rather than
+dividing by a token-sized denominator. See the module docstring's "Daily
+return convention" section."""
 
 
 class OverlayStructure(StrEnum):
@@ -373,6 +415,11 @@ class _Position:
     open_cost: float
     """Dollars, charged against the return of the first day after entry."""
     premium_dollars: float
+    equity: float
+    """Running within-cycle equity in dollars: ``capital_base`` plus
+    cumulative net P&L (mark-to-model, net of costs) through the most
+    recently marked day. Always >= 0 (see module docstring); the
+    denominator of the *next* day's return."""
 
 
 def _selector_strike(
@@ -461,6 +508,7 @@ def _open_position(
         book_value_prev=book_value,
         open_cost=open_cost,
         premium_dollars=premium_dollars,
+        equity=capital_base,
     )
 
 
@@ -601,13 +649,29 @@ def simulate_overlay(
                 if event is not None:
                     events.append(event)
 
-        returns.iloc[i] = (pnl - day_cost) / position.capital_base
+        net_pnl = pnl - day_cost
+        equity_prev = position.equity
+        dead_floor = _EQUITY_DEAD_FRACTION * abs(position.capital_base)
+        if equity_prev <= dead_floor:
+            # Economically dead (see module docstring): pin the return at
+            # 0.0 rather than divide by a token-sized denominator.
+            returns.iloc[i] = 0.0
+            new_equity = equity_prev
+        else:
+            # Clamp at 0.0: the structural loss bound (module docstring)
+            # guarantees mark-to-model P&L alone cannot take equity
+            # negative; only real trading costs on the day equity is
+            # already near-exhausted could, and the position cannot
+            # actually owe more than it has.
+            new_equity = max(equity_prev + net_pnl, 0.0)
+            returns.iloc[i] = (new_equity - equity_prev) / equity_prev
 
         if should_close:
             n_rolls += 1
             position = _enter(spot_i, vol_i, i)
         else:
             position.book_value_prev = mtm_end
+            position.equity = new_equity
 
     valid = returns.notna()
     underlying_returns = close.pct_change().where(valid)
