@@ -31,7 +31,9 @@ HONESTY RULES (PLAN.md, "v2 — Options Overlay Module")
 """
 
 import logging
+import os
 from collections.abc import Callable, Mapping
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -198,6 +200,183 @@ def _skipped_row(config: OverlayConfig, symbol: str) -> dict[str, object]:
     }
 
 
+def _score_overlay_pair(
+    config: OverlayConfig,
+    symbol: str,
+    df: pd.DataFrame,
+    wf: WalkForwardConfig,
+    vol_config: VolProxyConfig,
+    costs: OverlayCosts,
+    rate: float,
+    n_bootstrap: int,
+    seed: int,
+    dd_floor: float,
+) -> dict[str, object]:
+    """Score one (overlay config, symbol) pair: simulate + walk-forward + bootstrap.
+
+    A pure function of its arguments, called identically by the serial
+    in-process loop and by a parallel worker process — see
+    ``funnel.backtest.sweep._score_pair`` for the identical design rationale.
+    """
+    try:
+        result = simulate_overlay(df, config.spec, vol_config, costs, rate)
+        overlay_score = score_overlay(result.returns, wf)
+        underlying_score = score_overlay(result.underlying_returns, wf)
+    except UndefinedRiskError, InsufficientHistoryError:
+        return _skipped_row(config, symbol)
+
+    bootstrap = bootstrap_stress(
+        overlay_score.oos_returns, n_bootstrap, seed=seed, dd_floor=dd_floor
+    )
+
+    return {
+        "config_name": config.name,
+        "structure": config.spec.structure.value,
+        "symbol": symbol,
+        "spec_params": _spec_params_to_str(config),
+        "overlay_is_sharpe": overlay_score.is_sharpe,
+        "overlay_oos_sharpe": overlay_score.oos_sharpe,
+        "overlay_oos_max_drawdown": overlay_score.oos_max_drawdown,
+        "underlying_oos_sharpe": underlying_score.oos_sharpe,
+        "underlying_oos_max_drawdown": underlying_score.oos_max_drawdown,
+        "oos_sharpe_vs_hold": overlay_score.oos_sharpe - underlying_score.oos_sharpe,
+        "premium_collected_annualized": result.premium_collected_annualized,
+        "mean_model_prob_itm": result.mean_prob_itm_at_entry,
+        "n_assignments": len(result.events),
+        "n_rolls": result.n_rolls,
+        "upside_forgone": result.upside_forgone,
+        "bootstrap_sharpe_p5": bootstrap.sharpe_p5,
+        "bootstrap_sharpe_p50": bootstrap.sharpe_p50,
+        "bootstrap_sharpe_p95": bootstrap.sharpe_p95,
+        "bootstrap_worst_case_drawdown": bootstrap.worst_case_drawdown,
+        "bootstrap_verdict": bootstrap.verdict,
+        "model_priced": True,
+        "skipped": False,
+    }
+
+
+def _score_overlay_symbol(
+    symbol: str,
+    df: pd.DataFrame,
+    configs: list[OverlayConfig],
+    wf: WalkForwardConfig,
+    vol_config: VolProxyConfig,
+    costs: OverlayCosts,
+    rate: float,
+    n_bootstrap: int,
+    seed: int,
+    dd_floor: float,
+) -> list[dict[str, object]]:
+    """Score every overlay config against one symbol's OHLCV frame.
+
+    Module-level and picklable (see
+    ``funnel.backtest.sweep._score_symbol``) — the per-asset chunk
+    ``_run_overlay_sweep_parallel`` dispatches to each worker.
+    """
+    return [
+        _score_overlay_pair(
+            config, symbol, df, wf, vol_config, costs, rate, n_bootstrap, seed, dd_floor
+        )
+        for config in configs
+    ]
+
+
+def _resolve_n_workers(n_workers: int | None, n_symbols: int) -> int:
+    """Resolve the requested worker count — identical policy to
+    ``funnel.backtest.sweep._resolve_n_workers``."""
+    resolved = n_workers if n_workers is not None else (os.process_cpu_count() or 1)
+    return max(1, min(resolved, max(n_symbols, 1)))
+
+
+def _run_overlay_sweep_serial(
+    all_symbols: list[str],
+    data: Mapping[str, pd.DataFrame],
+    configs: list[OverlayConfig],
+    wf: WalkForwardConfig,
+    vol_config: VolProxyConfig,
+    costs: OverlayCosts,
+    rate: float,
+    n_bootstrap: int,
+    seed: int,
+    dd_floor: float,
+    should_stop: Callable[[], bool] | None,
+) -> pd.DataFrame:
+    """Original single-process overlay sweep loop — the equivalence baseline.
+
+    ``n_workers`` in ``{0, 1}`` (and the resolved-to-1 edge case) always
+    takes this path verbatim.
+    """
+    rows: list[dict[str, object]] = []
+    for symbol in all_symbols:
+        df = data[symbol]
+        for config in configs:
+            if should_stop is not None and should_stop():
+                raise RunCancelledError("run_overlay_sweep cancelled")
+            rows.append(
+                _score_overlay_pair(
+                    config, symbol, df, wf, vol_config, costs, rate, n_bootstrap, seed, dd_floor
+                )
+            )
+    return pd.DataFrame(rows, columns=list(OVERLAY_SWEEP_COLUMNS))
+
+
+def _run_overlay_sweep_parallel(
+    all_symbols: list[str],
+    data: Mapping[str, pd.DataFrame],
+    configs: list[OverlayConfig],
+    wf: WalkForwardConfig,
+    vol_config: VolProxyConfig,
+    costs: OverlayCosts,
+    rate: float,
+    n_bootstrap: int,
+    seed: int,
+    dd_floor: float,
+    n_workers: int,
+    should_stop: Callable[[], bool] | None,
+) -> pd.DataFrame:
+    """Per-symbol process-pool overlay sweep — mirrors
+    ``funnel.backtest.sweep._run_sweep_parallel``: one task per symbol,
+    results assembled in submission order, ``should_stop`` polled between
+    completed futures, non-blocking teardown on cancellation/error.
+    """
+    executor = ProcessPoolExecutor(max_workers=n_workers)
+    rows_by_symbol: dict[str, list[dict[str, object]]] = {}
+    try:
+        futures = {
+            executor.submit(
+                _score_overlay_symbol,
+                symbol,
+                data[symbol],
+                configs,
+                wf,
+                vol_config,
+                costs,
+                rate,
+                n_bootstrap,
+                seed,
+                dd_floor,
+            ): symbol
+            for symbol in all_symbols
+        }
+        pending = set(futures)
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                rows_by_symbol[futures[future]] = future.result()
+            if should_stop is not None and should_stop():
+                raise RunCancelledError("run_overlay_sweep cancelled")
+    except BaseException:
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        executor.shutdown(wait=True)
+
+    rows: list[dict[str, object]] = []
+    for symbol in all_symbols:
+        rows.extend(rows_by_symbol[symbol])
+    return pd.DataFrame(rows, columns=list(OVERLAY_SWEEP_COLUMNS))
+
+
 def run_overlay_sweep(
     data: Mapping[str, pd.DataFrame],
     configs: list[OverlayConfig],
@@ -210,6 +389,7 @@ def run_overlay_sweep(
     n_bootstrap: int = 200,
     seed: int = 42,
     should_stop: Callable[[], bool] | None = None,
+    n_workers: int | None = None,
 ) -> pd.DataFrame:
     """Run every (overlay config, symbol) pair through simulation + walk-forward + bootstrap.
 
@@ -227,10 +407,15 @@ def run_overlay_sweep(
     a meaningful walk-forward split (``InsufficientHistoryError``, raised by
     ``score_overlay``).
 
+    ``n_workers`` mirrors ``funnel.backtest.sweep.run_sweep``'s parallelism
+    design (per-asset ``ProcessPoolExecutor`` chunking, ``None`` -> resolves
+    to ``os.process_cpu_count()`` capped at the symbol count, ``0``/``1`` ->
+    original serial loop unchanged for the equivalence baseline).
+
     ``should_stop``, if given, is checked once per (config, symbol)
-    iteration — same discipline as ``funnel.backtest.sweep.run_sweep``, and
-    for the same reason: a stage-boundary check alone would leave a
-    multi-minute overlay sweep unstoppable. When it returns ``True``,
+    iteration in the serial path, or once per completed per-symbol task in
+    the parallel path — same discipline and rationale as
+    ``funnel.backtest.sweep.run_sweep``. When it returns ``True``,
     ``RunCancelledError`` is raised immediately and no rows (nor
     ``overlay_results.csv``) are written for this run.
     """
@@ -248,52 +433,51 @@ def run_overlay_sweep(
 
     dd_floor = thresholds.max_dd_floor
 
-    rows: list[dict[str, object]] = []
-    for symbol in all_symbols:
-        df = data[symbol]
-        for config in configs:
-            if should_stop is not None and should_stop():
-                raise RunCancelledError("run_overlay_sweep cancelled")
-            try:
-                result = simulate_overlay(df, config.spec, vol_config, costs, rate)
-                overlay_score = score_overlay(result.returns, wf)
-                underlying_score = score_overlay(result.underlying_returns, wf)
-            except UndefinedRiskError, InsufficientHistoryError:
-                rows.append(_skipped_row(config, symbol))
-                continue
+    if n_workers == 0 or n_workers == 1:
+        return _run_overlay_sweep_serial(
+            all_symbols,
+            data,
+            configs,
+            wf,
+            vol_config,
+            costs,
+            rate,
+            n_bootstrap,
+            seed,
+            dd_floor,
+            should_stop,
+        )
 
-            bootstrap = bootstrap_stress(
-                overlay_score.oos_returns, n_bootstrap, seed=seed, dd_floor=dd_floor
-            )
+    resolved_workers = _resolve_n_workers(n_workers, len(all_symbols))
+    if resolved_workers <= 1:
+        return _run_overlay_sweep_serial(
+            all_symbols,
+            data,
+            configs,
+            wf,
+            vol_config,
+            costs,
+            rate,
+            n_bootstrap,
+            seed,
+            dd_floor,
+            should_stop,
+        )
 
-            rows.append(
-                {
-                    "config_name": config.name,
-                    "structure": config.spec.structure.value,
-                    "symbol": symbol,
-                    "spec_params": _spec_params_to_str(config),
-                    "overlay_is_sharpe": overlay_score.is_sharpe,
-                    "overlay_oos_sharpe": overlay_score.oos_sharpe,
-                    "overlay_oos_max_drawdown": overlay_score.oos_max_drawdown,
-                    "underlying_oos_sharpe": underlying_score.oos_sharpe,
-                    "underlying_oos_max_drawdown": underlying_score.oos_max_drawdown,
-                    "oos_sharpe_vs_hold": overlay_score.oos_sharpe - underlying_score.oos_sharpe,
-                    "premium_collected_annualized": result.premium_collected_annualized,
-                    "mean_model_prob_itm": result.mean_prob_itm_at_entry,
-                    "n_assignments": len(result.events),
-                    "n_rolls": result.n_rolls,
-                    "upside_forgone": result.upside_forgone,
-                    "bootstrap_sharpe_p5": bootstrap.sharpe_p5,
-                    "bootstrap_sharpe_p50": bootstrap.sharpe_p50,
-                    "bootstrap_sharpe_p95": bootstrap.sharpe_p95,
-                    "bootstrap_worst_case_drawdown": bootstrap.worst_case_drawdown,
-                    "bootstrap_verdict": bootstrap.verdict,
-                    "model_priced": True,
-                    "skipped": False,
-                }
-            )
-
-    return pd.DataFrame(rows, columns=list(OVERLAY_SWEEP_COLUMNS))
+    return _run_overlay_sweep_parallel(
+        all_symbols,
+        data,
+        configs,
+        wf,
+        vol_config,
+        costs,
+        rate,
+        n_bootstrap,
+        seed,
+        dd_floor,
+        resolved_workers,
+        should_stop,
+    )
 
 
 def write_overlay_results(df: pd.DataFrame, path: Path) -> None:

@@ -33,11 +33,33 @@ def compare_detectors(df: pd.DataFrame, detectors: Mapping[str, RegimeDetector])
       previous day (regime changes).
     - ``mean_spell_length``: mean number of consecutive days per unbroken
       regime spell (``len(df) / (n_switches + 1)``).
+
+    Thin convenience wrapper around ``compare_detectors_from_labels`` for a
+    caller that only wants the comparison table and has no other use for
+    the raw labels. A caller that *also* needs the labels for something
+    else (``funnel.pipeline``'s regime stage, which reuses them for
+    ``agreement_matrix`` and regime-conditioned performance) should call
+    each detector's ``classify`` once itself and use
+    ``compare_detectors_from_labels`` directly — some detectors
+    (``regime.changepoint.ChangePointDetector`` in particular) are
+    expensive enough that calling ``classify`` twice measurably doubles
+    this stage's wall time for no benefit, since ``classify`` is a pure
+    function of ``df`` and returns the identical series both times.
+    """
+    labels_by_detector = {name: detector.classify(df) for name, detector in detectors.items()}
+    return compare_detectors_from_labels(labels_by_detector)
+
+
+def compare_detectors_from_labels(labels_by_detector: Mapping[str, pd.Series]) -> pd.DataFrame:
+    """Same output as ``compare_detectors``, from already-computed label series.
+
+    See ``compare_detectors`` for the column documentation and the
+    duplicate-``classify``-call rationale for preferring this function when
+    the caller already has (or separately needs) the labels.
     """
     columns = ["detector", "fraction_trending", "n_switches", "mean_spell_length"]
     rows: list[dict[str, object]] = []
-    for name, detector in detectors.items():
-        labels = detector.classify(df)
+    for name, labels in labels_by_detector.items():
         rows.append({"detector": name, **_spell_stats(labels)})
     return pd.DataFrame(rows, columns=columns)
 

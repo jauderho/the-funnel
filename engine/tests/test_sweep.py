@@ -1,5 +1,6 @@
 """Small end-to-end sweep + attrition tests: row counts, skip handling, attrition sums."""
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -7,6 +8,7 @@ import pandas as pd
 import pytest
 
 from funnel.backtest.sweep import run_sweep, write_sweep_results
+from funnel.cancellation import RunCancelledError
 from funnel.config import CostModel, FunnelThresholds, WalkForwardConfig
 from funnel.data.universe import AssetClass
 from funnel.reports.attrition import (
@@ -210,3 +212,92 @@ def test_write_sweep_and_funnel_report_csvs(
     assert funnel_path.exists()
     reloaded = pd.read_csv(sweep_path)
     assert len(reloaded) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# PERF-1: sweep parallelism (n_workers) — equivalence and cancellation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def multi_symbol_data() -> dict[str, pd.DataFrame]:
+    """Six symbols so ``n_workers=2`` actually chunks work across multiple
+    per-asset process-pool tasks (rather than one worker doing everything)."""
+    return {f"SYM{i}": _make_df(700, seed=i) for i in range(6)}
+
+
+@pytest.fixture
+def multi_symbol_asset_classes() -> dict[str, AssetClass]:
+    return {f"SYM{i}": AssetClass.LARGE_CAP for i in range(6)}
+
+
+def test_sweep_n_workers_zero_matches_default_serial(
+    configs: list[StrategyConfig],
+    data: dict[str, pd.DataFrame],
+    asset_classes: dict[str, AssetClass],
+) -> None:
+    """``n_workers=0`` and the implicit default (no ``n_workers`` passed) must
+    take the identical single-process code path."""
+    wf = WalkForwardConfig()
+    thresholds = FunnelThresholds()
+    costs = CostModel()
+    df_default = run_sweep(data, configs, asset_classes, wf, thresholds, costs)
+    df_zero = run_sweep(data, configs, asset_classes, wf, thresholds, costs, n_workers=0)
+    df_one = run_sweep(data, configs, asset_classes, wf, thresholds, costs, n_workers=1)
+    pd.testing.assert_frame_equal(df_default, df_zero)
+    pd.testing.assert_frame_equal(df_default, df_one)
+
+
+def test_sweep_parallel_matches_serial_exactly(
+    configs: list[StrategyConfig],
+    multi_symbol_data: dict[str, pd.DataFrame],
+    multi_symbol_asset_classes: dict[str, AssetClass],
+) -> None:
+    """The process-pool path (``n_workers=3``, actually exercising the pool
+    across a ``ProcessPoolExecutor`` — this is the pool-path test PERF-1
+    requires, using module-level ``StrategyConfig.fn`` callables and
+    picklable frozen-dataclass args so it works under macOS ``spawn`` and
+    Linux ``fork`` alike) must produce byte-identical output to the serial
+    baseline: same row order (per-asset submission order) and same values."""
+    wf = WalkForwardConfig()
+    thresholds = FunnelThresholds()
+    costs = CostModel()
+
+    df_serial = run_sweep(
+        multi_symbol_data, configs, multi_symbol_asset_classes, wf, thresholds, costs, n_workers=1
+    )
+    df_parallel = run_sweep(
+        multi_symbol_data, configs, multi_symbol_asset_classes, wf, thresholds, costs, n_workers=3
+    )
+    pd.testing.assert_frame_equal(df_serial, df_parallel)
+
+
+def test_sweep_cancellation_stops_promptly_in_parallel(
+    configs: list[StrategyConfig],
+    multi_symbol_data: dict[str, pd.DataFrame],
+    multi_symbol_asset_classes: dict[str, AssetClass],
+) -> None:
+    """A ``should_stop`` that is already true must cancel the parallel sweep
+    after only the first batch of completed per-asset tasks — not after the
+    whole 6-symbol pool has drained — and raise ``RunCancelledError`` with no
+    DataFrame returned. Bounds wall time well under what running all 6
+    symbols serially would take, proving the pool was torn down without
+    waiting for every task."""
+    wf = WalkForwardConfig()
+    thresholds = FunnelThresholds()
+    costs = CostModel()
+
+    start = time.perf_counter()
+    with pytest.raises(RunCancelledError):
+        run_sweep(
+            multi_symbol_data,
+            configs,
+            multi_symbol_asset_classes,
+            wf,
+            thresholds,
+            costs,
+            should_stop=lambda: True,
+            n_workers=2,
+        )
+    elapsed = time.perf_counter() - start
+    assert elapsed < 30.0

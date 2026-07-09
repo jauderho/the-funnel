@@ -10,7 +10,12 @@ import pytest
 
 from funnel.regime.base import Regime, regime_conditioned_metrics
 from funnel.regime.changepoint import ChangePointDetector
-from funnel.regime.compare import agreement_matrix, assemble_regime_performance, compare_detectors
+from funnel.regime.compare import (
+    agreement_matrix,
+    assemble_regime_performance,
+    compare_detectors,
+    compare_detectors_from_labels,
+)
 from funnel.regime.hmm import HMMDetector
 from funnel.regime.ma_filter import MAFilterDetector
 from funnel.regime.realized_vol import RealizedVolDetector
@@ -152,6 +157,34 @@ def test_changepoint_halves_differ_materially(switching_ohlcv: pd.DataFrame) -> 
     frac_trending_second = (second_half == Regime.TRENDING).mean()
 
     assert abs(frac_trending_first - frac_trending_second) >= 0.3
+
+
+def test_changepoint_max_window_none_matches_omitting_the_parameter(
+    switching_ohlcv: pd.DataFrame,
+) -> None:
+    """PERF-1: ``max_window=None`` (the default) must be identical to
+    omitting the parameter entirely — the equivalence guarantee that lets
+    this knob ship without changing any existing caller's output."""
+    default = ChangePointDetector(min_train=60, refit_every=21)
+    explicit_none = ChangePointDetector(min_train=60, refit_every=21, max_window=None)
+    pd.testing.assert_series_equal(
+        default.classify(switching_ohlcv), explicit_none.classify(switching_ohlcv)
+    )
+
+
+def test_changepoint_max_window_bounds_the_window(switching_ohlcv: pd.DataFrame) -> None:
+    """Setting ``max_window`` makes the window rolling instead of expanding
+    (a real, working knob) while preserving the detector's warmup/no-NaN/
+    valid-label contract. It is a genuine semantic change (PELT sees a
+    different, shorter signal) so it is not compared for equality against
+    the unbounded default here — only opt-in behavior is deferred to the
+    caller, per PERF-1's identical-by-default constraint."""
+    capped = ChangePointDetector(min_train=60, refit_every=21, max_window=100)
+    labels = capped.classify(switching_ohlcv)
+
+    assert not labels.isna().any()
+    assert set(labels.unique()).issubset({Regime.TRENDING, Regime.CHOPPY})
+    assert (labels.iloc[:60] == Regime.CHOPPY).all()
 
 
 # --------------------------------------------------------------------------
@@ -323,6 +356,38 @@ def test_compare_detectors_switch_counts_on_hand_built_labels() -> None:
     assert row["n_switches"] == 3  # choppy->trending, trending->choppy, choppy->trending
     assert row["fraction_trending"] == pytest.approx(3 / 6)
     assert row["mean_spell_length"] == pytest.approx(6 / 4)
+
+
+def test_compare_detectors_from_labels_matches_compare_detectors() -> None:
+    """PERF-1: ``funnel.pipeline`` calls ``classify()`` once per detector and
+    derives the comparison table via ``compare_detectors_from_labels``
+    instead of calling ``compare_detectors`` (which would call ``classify``
+    a second, redundant time — expensive for detectors like
+    ``ChangePointDetector``). The two entry points must produce identical
+    output for the same labels."""
+    index = pd.bdate_range("2021-01-01", periods=6)
+    labels = pd.Series(
+        [
+            Regime.CHOPPY,
+            Regime.CHOPPY,
+            Regime.TRENDING,
+            Regime.TRENDING,
+            Regime.CHOPPY,
+            Regime.TRENDING,
+        ],
+        index=index,
+        dtype=object,
+    )
+
+    class _FixedDetector:
+        def classify(self, df: pd.DataFrame) -> pd.Series:
+            return labels
+
+    df = pd.DataFrame({"close": np.arange(6.0)}, index=index)
+    via_detectors = compare_detectors(df, {"fixed": _FixedDetector()})
+    via_labels = compare_detectors_from_labels({"fixed": labels})
+
+    pd.testing.assert_frame_equal(via_detectors, via_labels)
 
 
 def test_assemble_regime_performance_schema() -> None:

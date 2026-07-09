@@ -193,6 +193,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   scans disk once and serves from memory (stale "running" rows from a
   dead process are corrected to errors).
 
+### Performance
+
+- Pipeline compute (PERF-1, profiled before/after on the full 150×31
+  synthetic run): total wall time 19.5 min → 7.1 min from (1) fixing a
+  redundancy bug that ran every regime detector's `classify()` twice and
+  (2) parallelizing the strategy and overlay sweeps across cores
+  (`ProcessPoolExecutor`, `n_workers` on PipelineConfig/OverlayRunConfig,
+  deterministic submission-order assembly, serial path preserved and
+  proven identical via exact-equality tests, cancellation still prompt
+  via `cancel_futures`). Further cut to ~2 min by bounding the
+  change-point comparator (`ChangePointDetector(max_window=1000)` in the
+  pipeline — ruptures PELT degrades toward O(n²) on the expanding 15-year
+  window, measured ~674 s vs ~66 s bounded). NOTE: the bounded window is a
+  semantic change to the change-point *diagnostic only* (HMM still does
+  all routing/conditioning); set `max_window=None` to restore the old
+  behavior. Bootstrap left as-is (measured ~1 s, not worth touching).
+
 ### Fixed (UI batch, user-reported)
 
 - Run rows now carry a run-type chip and route predictably (strategy →

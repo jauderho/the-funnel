@@ -283,3 +283,40 @@ def test_run_pipeline_zero_survivors_completes_with_valid_report(tmp_path: Path)
     # Still valid, parseable JSON.
     report_path = result.run_dir / "report.json"
     json.loads(report_path.read_text())
+
+
+def test_run_pipeline_calls_each_regime_detector_classify_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PERF-1 regression test: before this fix, the regime stage called
+    every detector's ``classify()`` twice — once inside ``compare_detectors``
+    and again to build ``labels_by_detector`` — which measurably doubled the
+    stage's wall time for the most expensive detector
+    (``ChangePointDetector``). Wraps ``HMMDetector`` with a call-counting
+    subclass (monkeypatched into ``funnel.pipeline``) and asserts exactly one
+    ``classify()`` call for the run's single regime proxy symbol."""
+    import funnel.pipeline as pipeline_module
+    from funnel.regime.hmm import HMMDetector
+
+    call_count = 0
+    real_classify = HMMDetector.classify
+
+    class _CountingHMMDetector(HMMDetector):
+        def classify(self, df: pd.DataFrame) -> pd.Series:
+            nonlocal call_count
+            call_count += 1
+            return real_classify(self, df)
+
+    monkeypatch.setattr(pipeline_module, "HMMDetector", _CountingHMMDetector)
+
+    config = PipelineConfig(
+        profile=_test_profile(),
+        wf=WalkForwardConfig(),
+        base_thresholds=FunnelThresholds(),
+        costs=CostModel(),
+        n_bootstrap=5,
+        configs=_small_grid(),
+    )
+    run_pipeline(config, SyntheticTestSource(), tmp_path, "run-classify-count")
+
+    assert call_count == 1

@@ -9,11 +9,14 @@ vs.-hold comparison), skip handling for too-short history, and bootstrap/run
 determinism (PLAN.md "v2 — Options Overlay Module", V2-M3).
 """
 
+import time
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from funnel.backtest.walkforward import _is_oos_split, _window_bounds
+from funnel.cancellation import RunCancelledError
 from funnel.config import FunnelThresholds, WalkForwardConfig
 from funnel.options.grid import OverlayConfig, build_overlay_grid, summarize_overlay_grid
 from funnel.options.overlays import OverlayCosts, OverlaySpec, OverlayStructure, StrikeSelector
@@ -478,3 +481,115 @@ def test_write_overlay_results_csv(
     reloaded = pd.read_csv(path)
     assert len(reloaded) == len(df)
     assert list(reloaded.columns) == list(OVERLAY_SWEEP_COLUMNS)
+
+
+# ---------------------------------------------------------------------------
+# PERF-1: overlay sweep parallelism (n_workers) — equivalence and cancellation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def multi_symbol_data() -> dict[str, pd.DataFrame]:
+    """Six symbols so ``n_workers=2`` actually chunks work across multiple
+    per-symbol process-pool tasks."""
+    return {f"SYM{i}": _make_df(700, seed=i) for i in range(6)}
+
+
+def test_overlay_sweep_n_workers_zero_matches_default_serial(
+    small_configs: list[OverlayConfig],
+    data: dict[str, pd.DataFrame],
+    wf: WalkForwardConfig,
+    vol_config: VolProxyConfig,
+    costs: OverlayCosts,
+    thresholds: FunnelThresholds,
+) -> None:
+    df_default = run_overlay_sweep(
+        data, small_configs, None, wf, vol_config, costs, 0.03, thresholds, n_bootstrap=25, seed=42
+    )
+    df_zero = run_overlay_sweep(
+        data,
+        small_configs,
+        None,
+        wf,
+        vol_config,
+        costs,
+        0.03,
+        thresholds,
+        n_bootstrap=25,
+        seed=42,
+        n_workers=0,
+    )
+    pd.testing.assert_frame_equal(df_default, df_zero)
+
+
+def test_overlay_sweep_parallel_matches_serial_exactly(
+    small_configs: list[OverlayConfig],
+    multi_symbol_data: dict[str, pd.DataFrame],
+    wf: WalkForwardConfig,
+    vol_config: VolProxyConfig,
+    costs: OverlayCosts,
+    thresholds: FunnelThresholds,
+) -> None:
+    """Pool-path test (PERF-1): ``n_workers=3`` actually dispatches across a
+    ``ProcessPoolExecutor`` (module-level task function, picklable frozen-
+    dataclass args — works under macOS ``spawn`` and Linux ``fork`` alike)
+    and must match the serial baseline exactly, including bootstrap columns
+    (same seed passed to every worker, same as the serial path)."""
+    df_serial = run_overlay_sweep(
+        multi_symbol_data,
+        small_configs,
+        None,
+        wf,
+        vol_config,
+        costs,
+        0.03,
+        thresholds,
+        n_bootstrap=25,
+        seed=42,
+        n_workers=1,
+    )
+    df_parallel = run_overlay_sweep(
+        multi_symbol_data,
+        small_configs,
+        None,
+        wf,
+        vol_config,
+        costs,
+        0.03,
+        thresholds,
+        n_bootstrap=25,
+        seed=42,
+        n_workers=3,
+    )
+    pd.testing.assert_frame_equal(df_serial, df_parallel)
+
+
+def test_overlay_sweep_cancellation_stops_promptly_in_parallel(
+    small_configs: list[OverlayConfig],
+    multi_symbol_data: dict[str, pd.DataFrame],
+    wf: WalkForwardConfig,
+    vol_config: VolProxyConfig,
+    costs: OverlayCosts,
+    thresholds: FunnelThresholds,
+) -> None:
+    """An already-true ``should_stop`` must cancel the parallel overlay sweep
+    after only the first batch of completed per-symbol tasks, raising
+    ``RunCancelledError`` well before all 6 symbols would finish serially."""
+    start = time.perf_counter()
+    with pytest.raises(RunCancelledError):
+        run_overlay_sweep(
+            multi_symbol_data,
+            small_configs,
+            None,
+            wf,
+            vol_config,
+            costs,
+            0.03,
+            thresholds,
+            n_bootstrap=25,
+            seed=42,
+            should_stop=lambda: True,
+            n_workers=2,
+        )
+    elapsed = time.perf_counter() - start
+    assert elapsed < 30.0

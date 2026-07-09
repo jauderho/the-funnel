@@ -61,7 +61,7 @@ from funnel.regime.changepoint import ChangePointDetector
 from funnel.regime.compare import (
     agreement_matrix,
     assemble_regime_performance,
-    compare_detectors,
+    compare_detectors_from_labels,
     write_regime_performance,
 )
 from funnel.regime.hmm import HMMDetector
@@ -135,6 +135,11 @@ class PipelineConfig:
     """Override the full strategy grid (``build_all_configs()``) with a
     smaller, explicit list — used by tests to keep runtime sane. ``None``
     (the production default) runs the full grid."""
+    n_workers: int | None = None
+    """Sweep parallelism, forwarded to ``funnel.backtest.sweep.run_sweep``
+    (PERF-1). ``None`` (the default) sweeps in parallel via a per-asset
+    ``ProcessPoolExecutor``; ``0``/``1`` forces the original single-process
+    loop."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -171,6 +176,11 @@ class OverlayRunConfig:
     """Override the full overlay grid (``build_overlay_grid()``) with a
     smaller, explicit list — used by tests to keep runtime sane. ``None``
     (the production default) runs the full grid."""
+    n_workers: int | None = None
+    """Overlay-sweep parallelism, forwarded to
+    ``funnel.options.sweep.run_overlay_sweep`` (PERF-1). ``None`` (the
+    default) sweeps in parallel via a per-symbol ``ProcessPoolExecutor``;
+    ``0``/``1`` forces the original single-process loop."""
 
     def __post_init__(self) -> None:
         if not self.symbols:
@@ -255,7 +265,14 @@ def run_pipeline(
     configs = config.configs if config.configs is not None else build_all_configs()
     transparency_count = total_backtest_count(len(configs), len(data))
     sweep_df = run_sweep(
-        data, configs, asset_classes, config.wf, thresholds, config.costs, should_stop=should_stop
+        data,
+        configs,
+        asset_classes,
+        config.wf,
+        thresholds,
+        config.costs,
+        should_stop=should_stop,
+        n_workers=config.n_workers,
     )
     sweep_path = run_dir / "sweep_results.csv"
     write_sweep_results(sweep_df, sweep_path)
@@ -320,10 +337,21 @@ def run_pipeline(
             "hmm": HMMDetector(seed=config.seed),
             "ma_filter": MAFilterDetector(),
             "realized_vol": RealizedVolDetector(),
-            "change_point": ChangePointDetector(),
+            # Bounded to a trailing ~4y window: PELT's cost grows toward
+            # O(n^2) on an expanding window (measured ~674s on 15y of
+            # daily data vs ~66s bounded), and as a *comparator* diagnostic
+            # (routing/conditioning uses the HMM), recent structural breaks
+            # are what matter. Set max_window=None to restore the
+            # full-expanding-window behavior.
+            "change_point": ChangePointDetector(max_window=1000),
         }
-        regime_comparison_df = compare_detectors(proxy_df, detectors)
+        # Each detector's classify() is called exactly once here (some,
+        # like ChangePointDetector, are expensive) and the resulting labels
+        # reused for both the comparison table and everything else below —
+        # see compare_detectors' docstring for why calling it directly
+        # (which would re-run classify() a second time) is avoided here.
         labels_by_detector = {name: d.classify(proxy_df) for name, d in detectors.items()}
+        regime_comparison_df = compare_detectors_from_labels(labels_by_detector)
         agreement_df = agreement_matrix(labels_by_detector)
         hmm_labels = labels_by_detector["hmm"]
 
@@ -530,6 +558,7 @@ def run_overlay_pipeline(
         config.n_bootstrap,
         config.seed,
         should_stop=should_stop,
+        n_workers=config.n_workers,
     )
     overlay_path = run_dir / "overlay_results.csv"
     write_overlay_results(overlay_df, overlay_path)
