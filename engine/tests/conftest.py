@@ -3,11 +3,32 @@
 All fixtures are deterministic (fixed numpy seed) and network-free.
 """
 
+import os
+
 import numpy as np
 import pandas as pd
 import pytest
 
 N_ROWS = 600
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_compute_cache(tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Isolate the PERF-2 compute cache (``funnel.compute_cache``) from the
+    real repo cache dir for the whole test session.
+
+    Without this, any test that runs ``run_pipeline`` with the default
+    ``use_compute_cache=True`` would read/write ``<repo>/data/compute_cache``
+    directly -- polluting it across test runs and, within a single run,
+    letting unrelated tests that happen to reuse identical synthetic data
+    silently hit each other's cache entries. Session-scoped and autouse so
+    it is set before any test (or module-scoped fixture, e.g.
+    ``test_pipeline.py``'s ``happy_path_run``) executes a pipeline. Tests
+    that specifically exercise cache hit/miss behavior should still pass an
+    explicit, test-local ``cache_dir`` for full control.
+    """
+    cache_dir = tmp_path_factory.mktemp("compute_cache")
+    os.environ["FUNNEL_COMPUTE_CACHE_DIR"] = str(cache_dir)
 
 
 def _to_ohlcv(index: pd.DatetimeIndex, close: np.ndarray, rng: np.random.Generator) -> pd.DataFrame:

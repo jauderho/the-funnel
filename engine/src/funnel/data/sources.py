@@ -15,6 +15,7 @@ close price is not usable by any strategy or the backtest engine).
 
 import logging
 import os
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -28,8 +29,25 @@ OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
 # Set once a switch to the "csrf" cookie strategy has succeeded for this
 # process. ``yfinance.data.YfData`` is a process-wide singleton, so a
 # successful switch benefits every subsequent ``YFinanceSource.fetch`` call
-# without needing to switch (or retry) again.
+# without needing to switch (or retry) again. Guarded by ``_csrf_lock``
+# (PERF-2: the pipeline's data stage now fetches symbols concurrently via a
+# thread pool, so multiple ``fetch`` calls can race into this block):
+# without the lock, a bare read-check-write of this flag plus an unguarded
+# call to ``_switch_to_csrf_cookie_strategy()`` is a genuine data race (lost
+# updates, redundant concurrent switch calls). The lock makes the
+# read-check-act sequence atomic and ensures the switch itself is only ever
+# attempted once. One accepted, documented limitation of the *first*
+# concurrent wave of a run affected by the fc.yahoo.com issue: only the
+# single fetch() call that actually performs the transition False -> True
+# retries within that same call; sibling calls already blocked on the lock
+# at that moment see the flag already ``True`` and, matching this module's
+# pre-existing (and separately tested) "don't reswitch/retry once already
+# active" contract, return their own already-empty result without a retry.
+# Every fetch after that first wave (including this same symbol on a later
+# run) benefits immediately, since its very first download attempt is made
+# against the now-already-switched process-wide client.
 _csrf_strategy_active = False
+_csrf_lock = threading.Lock()
 
 
 @runtime_checkable
@@ -55,17 +73,20 @@ class YFinanceSource:
             return df
 
         global _csrf_strategy_active
-        if not _csrf_strategy_active:
-            logger.warning(
-                "yfinance returned an empty frame for %s; falling back to the "
-                "'csrf' cookie strategy and retrying once",
-                symbol,
-            )
-            _csrf_strategy_active = _switch_to_csrf_cookie_strategy()
-            if _csrf_strategy_active:
-                df = _normalize(_download(symbol, start, end))
-                if not df.empty:
-                    logger.info("csrf cookie strategy fallback succeeded for %s", symbol)
+        with _csrf_lock:
+            already_active = _csrf_strategy_active
+            if not already_active:
+                logger.warning(
+                    "yfinance returned an empty frame for %s; falling back to the "
+                    "'csrf' cookie strategy and retrying once",
+                    symbol,
+                )
+                _csrf_strategy_active = _switch_to_csrf_cookie_strategy()
+            switched = _csrf_strategy_active
+        if not already_active and switched:
+            df = _normalize(_download(symbol, start, end))
+            if not df.empty:
+                logger.info("csrf cookie strategy fallback succeeded for %s", symbol)
         return df
 
 

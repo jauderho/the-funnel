@@ -142,6 +142,10 @@ class SaveProfileRequest(BaseModel):
 class CreateRunRequest(BaseModel):
     profile_name: str | None = None
     sliders: SliderValuesModel | None = None
+    use_cache: bool = True
+    """PERF-2: whether the sweep/regime stages may use the on-disk
+    threshold-independent compute cache. ``False`` forces a fully fresh
+    run, bypassing the cache on both the read and write side."""
 
 
 class CreateOverlayRunRequest(BaseModel):
@@ -239,6 +243,7 @@ def create_app() -> FastAPI:
             base_thresholds=FunnelThresholds(),
             costs=CostModel(),
             configs=get_strategy_configs(),
+            use_compute_cache=request.use_cache,
         )
 
         def work(progress: Any, should_stop: Callable[[], bool]) -> None:

@@ -1,5 +1,6 @@
 """Tests for the data layer: cache behavior and the OHLCV column contract."""
 
+import threading
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
@@ -232,3 +233,51 @@ def test_fetch_does_not_reswitch_once_strategy_already_active(
     assert calls["switch"] == 0
     assert calls["download"] == 1
     assert result.empty
+
+
+def test_fetch_csrf_switch_is_thread_safe_under_concurrent_first_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PERF-2: the pipeline's data stage now fetches symbols concurrently
+    via a thread pool (``funnel.pipeline._fetch_all``), so multiple
+    ``YFinanceSource.fetch`` calls can race into the csrf-switch fallback
+    block simultaneously. Regardless of how many threads race in with an
+    initially-empty first attempt, the switch itself (``_switch_to_csrf_cookie_strategy``)
+    must be attempted at most once -- proving ``_csrf_lock`` actually
+    serializes the read-check-write of the module flag rather than letting
+    every racing thread redundantly invoke it."""
+    n_threads = 12
+    switch_calls = {"count": 0}
+    switch_lock = threading.Lock()
+
+    def fake_download(*args: Any, **kwargs: Any) -> pd.DataFrame:
+        # Every call in this test simulates the "still broken" first
+        # attempt for every thread's symbol -- every thread's very first
+        # download is empty, so every thread races into the fallback block.
+        df = pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+        df.index = pd.DatetimeIndex([])
+        return df
+
+    def fake_switch() -> bool:
+        with switch_lock:
+            switch_calls["count"] += 1
+        sources_module._csrf_strategy_active = True
+        return True
+
+    monkeypatch.setattr(yfinance, "download", fake_download)
+    monkeypatch.setattr(sources_module, "_switch_to_csrf_cookie_strategy", fake_switch)
+
+    barrier = threading.Barrier(n_threads)
+
+    def worker() -> None:
+        barrier.wait(timeout=5.0)  # maximize the chance all threads race together
+        YFinanceSource().fetch("SPY", date(2020, 1, 1), date(2020, 1, 10))
+
+    threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+
+    assert switch_calls["count"] == 1
+    assert sources_module._csrf_strategy_active is True

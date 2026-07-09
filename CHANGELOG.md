@@ -210,6 +210,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   all routing/conditioning); set `max_window=None` to restore the old
   behavior. Bootstrap left as-is (measured ~1 s, not worth touching).
 
+### Performance (PERF-2, measured)
+
+- Threshold-independent compute cache: the sweep's walk-forward metrics and
+  the regime detectors' labels never depend on profile thresholds, so both
+  are now cached on disk keyed by a fingerprint of the actual inputs (data
+  content hash, grid, walk-forward, costs, detector params) plus an
+  engine-version + schema salt (code changes can never serve stale
+  numbers). Cache hits skip the computation entirely and re-apply only the
+  cheap threshold verdicts — proven byte-identical to fresh runs. Every
+  report discloses `compute_cache` hit/miss and the UI shows a "cached"
+  chip; `use_cache: false` forces a fresh run. Warm sweep 0.07 s (was ~6 s),
+  warm regime 0.04 s (was ~7 s).
+- Changepoint comparator now uses PELT `jump=10` (new knob, was hardcoded
+  5): verified on real SPY 2010–2025 inside the container — 3.9x faster
+  with 0.0000% label difference.
+- Sweep pools use `forkserver` on macOS (fork remains on Linux); the four
+  `.rolling().apply()` indicator families (linreg_slope, aroon, hull_ma,
+  connors_rsi) are vectorized with exact-parity tests against verbatim
+  reference implementations; universe data now fetches on an 8-thread pool
+  (with a fixed race in the yfinance csrf-fallback flag, now lock-guarded).
+- Net effect on the synthetic full grid (150×31): cold 57 s → 8.3 s; warm
+  (slider change) → 3.6 s.
+
 ### Fixed (adversarial review findings)
 
 - CRITICAL — overlay daily returns could fall below -100% (mark-to-model

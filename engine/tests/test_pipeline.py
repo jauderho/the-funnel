@@ -329,6 +329,12 @@ def test_run_pipeline_calls_each_regime_detector_classify_exactly_once(
         costs=CostModel(),
         n_bootstrap=5,
         configs=_small_grid(),
+        # This test asserts something about the *computation path* (no
+        # duplicate classify() calls within one fresh regime stage), which
+        # is orthogonal to the PERF-2 compute cache — a cache hit skips
+        # classify() entirely by design (see test_pipeline_compute_cache.py),
+        # which would make this assertion meaningless rather than failing.
+        use_compute_cache=False,
     )
     run_pipeline(config, SyntheticTestSource(), tmp_path, "run-classify-count")
 

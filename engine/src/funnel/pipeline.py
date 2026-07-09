@@ -17,6 +17,7 @@ import json
 import logging
 import math
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -26,7 +27,9 @@ import pandas as pd
 
 from funnel.backtest.engine import cost_bps_for
 from funnel.backtest.sweep import run_sweep, write_sweep_results
+from funnel.backtest.sweep_cache import run_sweep_cached
 from funnel.backtest.walkforward import InsufficientHistoryError, walk_forward_oos
+from funnel.compute_cache import default_compute_cache_dir
 from funnel.config import CostModel, FunnelThresholds, WalkForwardConfig
 from funnel.data.sources import DataSource
 from funnel.data.universe import (
@@ -65,6 +68,7 @@ from funnel.regime.compare import (
     write_regime_performance,
 )
 from funnel.regime.hmm import HMMDetector
+from funnel.regime.label_cache import classify_all_cached
 from funnel.regime.ma_filter import MAFilterDetector
 from funnel.regime.realized_vol import RealizedVolDetector
 from funnel.reports.attrition import build_attrition_report, to_dict, write_funnel_report
@@ -154,6 +158,19 @@ class PipelineConfig:
     (PERF-1). ``None`` (the default) sweeps in parallel via a per-asset
     ``ProcessPoolExecutor``; ``0``/``1`` forces the original single-process
     loop."""
+    use_compute_cache: bool = True
+    """PERF-2: whether the sweep and regime stages consult/populate the
+    on-disk threshold-independent compute cache (``funnel.compute_cache``).
+    ``True`` (the default) skips ``walk_forward_oos``/detector ``classify()``
+    entirely on a fingerprint hit (same data/grid/wf/costs, thresholds may
+    differ) and re-applies only the cheap threshold-derived verdicts.
+    ``False`` forces a fully fresh computation, bypassing the cache on both
+    the read and write side -- used for a caller-requested "forced fresh"
+    run (e.g. to sidestep a suspected bad entry)."""
+    cache_dir: Path | None = None
+    """Compute-cache directory override, mainly for test isolation. ``None``
+    (the default) resolves to ``funnel.compute_cache.default_compute_cache_dir()``
+    at run time (honors ``FUNNEL_COMPUTE_CACHE_DIR`` / ``FUNNEL_DATA_DIR``)."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -228,6 +245,30 @@ def _records(df: pd.DataFrame) -> list[dict[str, Any]]:
     return [_json_safe(row) for row in df.to_dict(orient="records")]
 
 
+_FETCH_MAX_WORKERS = 8
+"""Bounded thread-pool size for the data stage (PERF-2): fetches are
+I/O-bound (network round trip, or a cache-hit disk read), so a small pool
+overlaps their latency instead of paying it once per symbol sequentially,
+without opening an unbounded number of concurrent connections."""
+
+
+def _fetch_all(
+    source: DataSource, symbols: list[str], start: date, end: date
+) -> dict[str, pd.DataFrame]:
+    """Fetch every symbol via a bounded thread pool.
+
+    Results are assembled in ``symbols`` (input) order regardless of
+    completion order -- identical dict ordering to a sequential
+    comprehension. Any exception raised by a ``source.fetch`` call
+    propagates out of this function exactly as it would from a sequential
+    loop: iterating ``future.result()`` in submission order raises on the
+    first symbol (in ``symbols`` order) whose fetch failed.
+    """
+    with ThreadPoolExecutor(max_workers=_FETCH_MAX_WORKERS) as executor:
+        futures = [executor.submit(source.fetch, symbol, start, end) for symbol in symbols]
+        return {symbol: future.result() for symbol, future in zip(symbols, futures, strict=True)}
+
+
 def run_pipeline(
     config: PipelineConfig,
     source: DataSource,
@@ -260,9 +301,7 @@ def run_pipeline(
 
     # --- 1. data -------------------------------------------------------
     progress("stage: data")
-    data = {
-        spec.symbol: source.fetch(spec.symbol, config.start, config.end) for spec in ASSET_UNIVERSE
-    }
+    data = _fetch_all(source, [spec.symbol for spec in ASSET_UNIVERSE], config.start, config.end)
     data = filter_universe(data)
     asset_classes = {
         spec.symbol: spec.asset_class for spec in ASSET_UNIVERSE if spec.symbol in data
@@ -278,16 +317,35 @@ def run_pipeline(
     progress("stage: sweep")
     configs = config.configs if config.configs is not None else build_all_configs()
     transparency_count = total_backtest_count(len(configs), len(data))
-    sweep_df = run_sweep(
-        data,
-        configs,
-        asset_classes,
-        config.wf,
-        thresholds,
-        config.costs,
-        should_stop=should_stop,
-        n_workers=config.n_workers,
-    )
+    cache_dir = config.cache_dir if config.cache_dir is not None else default_compute_cache_dir()
+    if config.use_compute_cache:
+        sweep_cache_result = run_sweep_cached(
+            data,
+            configs,
+            asset_classes,
+            config.wf,
+            thresholds,
+            config.costs,
+            cache_dir,
+            should_stop=should_stop,
+            n_workers=config.n_workers,
+        )
+        sweep_df = sweep_cache_result.sweep_df
+        sweep_cache_status = "hit" if sweep_cache_result.cache_hit else "miss"
+        sweep_fingerprint = sweep_cache_result.fingerprint
+    else:
+        sweep_df = run_sweep(
+            data,
+            configs,
+            asset_classes,
+            config.wf,
+            thresholds,
+            config.costs,
+            should_stop=should_stop,
+            n_workers=config.n_workers,
+        )
+        sweep_cache_status = "bypassed"
+        sweep_fingerprint = ""
     sweep_path = run_dir / "sweep_results.csv"
     write_sweep_results(sweep_df, sweep_path)
     artifact_paths["sweep_results.csv"] = sweep_path
@@ -340,6 +398,7 @@ def run_pipeline(
     agreement_df = pd.DataFrame()
     regime_performance_df = pd.DataFrame()
     hmm_labels: pd.Series | None = None
+    regime_cache_status = "skipped"
     if config.regime_proxy_symbol not in data:
         warnings.append(
             f"regime: proxy symbol {config.regime_proxy_symbol!r} not present in filtered "
@@ -356,15 +415,25 @@ def run_pipeline(
             # daily data vs ~66s bounded), and as a *comparator* diagnostic
             # (routing/conditioning uses the HMM), recent structural breaks
             # are what matter. Set max_window=None to restore the
-            # full-expanding-window behavior.
-            "change_point": ChangePointDetector(max_window=1000),
+            # full-expanding-window behavior. jump=10 (PERF-2, default is 5):
+            # verified on real SPY data (2010-2025, 4023 rows) at ~3.9x
+            # faster (19.50s -> 5.00s for one full classify() call) with a
+            # measured 0.0% CHOPPY/TRENDING label-diff rate vs jump=5,
+            # confirming the synthetic-data investigation's finding.
+            "change_point": ChangePointDetector(max_window=1000, jump=10),
         }
         # Each detector's classify() is called exactly once here (some,
         # like ChangePointDetector, are expensive) and the resulting labels
         # reused for both the comparison table and everything else below —
         # see compare_detectors' docstring for why calling it directly
         # (which would re-run classify() a second time) is avoided here.
-        labels_by_detector = {name: d.classify(proxy_df) for name, d in detectors.items()}
+        if config.use_compute_cache:
+            regime_cache_result = classify_all_cached(proxy_df, detectors, cache_dir)
+            labels_by_detector = regime_cache_result.labels_by_detector
+            regime_cache_status = "hit" if regime_cache_result.cache_hit else "miss"
+        else:
+            labels_by_detector = {name: d.classify(proxy_df) for name, d in detectors.items()}
+            regime_cache_status = "bypassed"
         regime_comparison_df = compare_detectors_from_labels(labels_by_detector)
         agreement_df = agreement_matrix(labels_by_detector)
         hmm_labels = labels_by_detector["hmm"]
@@ -499,6 +568,14 @@ def run_pipeline(
             "redundancy_flags": _records(redundancy_df),
         },
         "screen": screen_summary_dict,
+        "compute_cache": {
+            "sweep": sweep_cache_status,
+            "regime": regime_cache_status,
+            # The sweep fingerprint is the primary ("the big one") cache key
+            # this run consulted; truncated for a compact, still-diagnostic
+            # display value (the full fingerprint is already 32 hex chars).
+            "fingerprint_prefix": sweep_fingerprint[:12],
+        },
         "warnings": warnings,
     }
     report = _json_safe(report)
@@ -544,9 +621,7 @@ def run_overlay_pipeline(
 
     # --- 1. data -------------------------------------------------------
     progress("stage: data")
-    raw_data = {
-        symbol: source.fetch(symbol, DEFAULT_START, DEFAULT_END) for symbol in config.symbols
-    }
+    raw_data = _fetch_all(source, config.symbols, DEFAULT_START, DEFAULT_END)
     data = filter_universe(raw_data)
     if not data:
         warnings.append(

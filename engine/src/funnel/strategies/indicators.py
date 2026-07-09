@@ -175,19 +175,41 @@ def force_index(df: pd.DataFrame, window: int = 13) -> pd.Series:
 
 
 def aroon(df: pd.DataFrame, window: int = 25) -> tuple[pd.Series, pd.Series]:
-    """Aroon up/down: how recently the window high/low occurred."""
+    """Aroon up/down: how recently the window high/low occurred.
 
-    def _periods_since_max(x: np.ndarray) -> float:
-        return float(len(x) - 1 - np.argmax(x))
+    Vectorized via ``sliding_window_view`` + ``argmax``/``argmin`` instead
+    of ``rolling().apply()`` (PERF-2): "periods since the window's high/low"
+    is exactly ``len(window) - 1 - argmax/argmin(window)``, the original
+    callback's own formula, computed once over the whole array instead of
+    once per Python-level callback invocation. Unlike a pure linear
+    combination (e.g. ``linreg_slope``), ``argmax``/``argmin`` do not
+    naturally propagate NaN the way pandas' ``min_periods == window``
+    default would, so windows containing any NaN are explicitly masked to
+    NaN to match.
+    """
+    win = window + 1
+    high = df["high"].to_numpy(dtype=np.float64)
+    low = df["low"].to_numpy(dtype=np.float64)
+    n = len(high)
+    since_high = np.full(n, np.nan, dtype=np.float64)
+    since_low = np.full(n, np.nan, dtype=np.float64)
 
-    def _periods_since_min(x: np.ndarray) -> float:
-        return float(len(x) - 1 - np.argmin(x))
+    if n >= win:
+        high_windows = np.lib.stride_tricks.sliding_window_view(high, win)
+        low_windows = np.lib.stride_tricks.sliding_window_view(low, win)
+        valid_high = ~np.isnan(high_windows).any(axis=1)
+        valid_low = ~np.isnan(low_windows).any(axis=1)
+        raw_since_high = (win - 1) - np.argmax(high_windows, axis=-1)
+        raw_since_low = (win - 1) - np.argmin(low_windows, axis=-1)
+        since_high[win - 1 :] = np.where(valid_high, raw_since_high, np.nan)
+        since_low[win - 1 :] = np.where(valid_low, raw_since_low, np.nan)
 
-    since_high = df["high"].rolling(window + 1).apply(_periods_since_max, raw=True)
-    since_low = df["low"].rolling(window + 1).apply(_periods_since_min, raw=True)
     aroon_up = 100.0 * (window - since_high) / window
     aroon_down = 100.0 * (window - since_low) / window
-    return aroon_up, aroon_down
+    return (
+        pd.Series(aroon_up, index=df.index),
+        pd.Series(aroon_down, index=df.index),
+    )
 
 
 def vortex(df: pd.DataFrame, window: int = 14) -> tuple[pd.Series, pd.Series]:
@@ -224,13 +246,26 @@ def hull_ma(series: pd.Series, window: int = 20) -> pd.Series:
 
 
 def _wma(series: pd.Series, window: int) -> pd.Series:
-    """Linearly weighted moving average (most recent bar weighted highest)."""
+    """Linearly weighted moving average (most recent bar weighted highest).
+
+    Vectorized via ``sliding_window_view`` + matrix multiply instead of
+    ``rolling().apply()`` (PERF-2), feeding ``hull_ma``. All weights are
+    strictly positive, so a NaN anywhere in a window always propagates to a
+    NaN output, matching ``rolling(window).apply``'s default
+    ``min_periods == window`` behavior.
+    """
     weights = np.arange(1, window + 1, dtype=np.float64)
+    weight_sum = weights.sum()
 
-    def _weighted(x: np.ndarray) -> float:
-        return float(np.dot(x, weights) / weights.sum())
+    values = series.to_numpy(dtype=np.float64)
+    n = len(values)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < window:
+        return pd.Series(out, index=series.index)
 
-    return series.rolling(window).apply(_weighted, raw=True)
+    windows = np.lib.stride_tricks.sliding_window_view(values, window)
+    out[window - 1 :] = windows @ weights / weight_sum
+    return pd.Series(out, index=series.index)
 
 
 def kama(series: pd.Series, window: int = 10, fast: int = 2, slow: int = 30) -> pd.Series:
@@ -259,15 +294,32 @@ def kama(series: pd.Series, window: int = 10, fast: int = 2, slow: int = 30) -> 
 
 
 def linreg_slope(series: pd.Series, window: int) -> pd.Series:
-    """Rolling linear-regression slope (per-bar, ordinary least squares)."""
+    """Rolling linear-regression slope (per-bar, ordinary least squares).
+
+    Vectorized via ``numpy.lib.stride_tricks.sliding_window_view`` instead
+    of ``rolling().apply()`` (PERF-2: measured 88-205x faster in isolation,
+    1e-9 numeric parity). Algebraically identical to the OLS slope formula:
+    ``sum((y - ybar) * (x - xbar)) == sum((x - xbar) * y)`` since the
+    ``x - xbar`` terms sum to zero, so ``ybar`` need not be computed at all.
+    A window containing any NaN naturally propagates to a NaN output (NaN
+    times any weight, including zero, is NaN), matching
+    ``rolling(window).apply``'s default ``min_periods == window`` behavior
+    (a window is only ever evaluated when it is entirely non-null).
+    """
     x = np.arange(window, dtype=np.float64)
     x_mean = x.mean()
     x_var = ((x - x_mean) ** 2).sum()
+    weights = x - x_mean
 
-    def _slope(y: np.ndarray) -> float:
-        return float(((y - y.mean()) * (x - x_mean)).sum() / x_var)
+    values = series.to_numpy(dtype=np.float64)
+    n = len(values)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < window:
+        return pd.Series(out, index=series.index)
 
-    return series.rolling(window).apply(_slope, raw=True)
+    windows = np.lib.stride_tricks.sliding_window_view(values, window)
+    out[window - 1 :] = windows @ weights / x_var
+    return pd.Series(out, index=series.index)
 
 
 def ultimate_oscillator(
@@ -286,34 +338,77 @@ def ultimate_oscillator(
     return 100.0 * (4.0 * avg1 + 2.0 * avg2 + avg3) / 7.0
 
 
+def _streak(diff: pd.Series) -> pd.Series:
+    """Signed length of the current same-direction consecutive-change streak.
+
+    Vectorized via a group-by-run-id trick instead of a per-row Python loop
+    (PERF-2): consecutive same-sign (nonzero) diffs increment a running
+    count in that sign's direction; a sign change (including to/from zero)
+    resets the count to +-1. A zero (or NaN, treated as zero -- matching the
+    original loop's ``else`` branch) diff is always streak 0. Row 0 is
+    always streak 0 (there is no prior diff to compare against), matching
+    the original loop which never touches index 0.
+    """
+    d = diff.to_numpy(dtype=np.float64)
+    n = len(d)
+    sign = np.zeros(n, dtype=np.float64)
+    if n > 1:
+        sign[1:] = np.nan_to_num(np.sign(d[1:]), nan=0.0)
+    change = np.ones(n, dtype=bool)
+    if n > 1:
+        change[1:] = sign[1:] != sign[:-1]
+    group_id = np.cumsum(change)
+    run_pos = pd.Series(np.ones(n)).groupby(group_id).cumsum().to_numpy()
+    streak = np.where(sign == 0.0, 0.0, run_pos * sign)
+    streak[0] = 0.0
+    return pd.Series(streak, index=diff.index)
+
+
+def _rolling_percent_rank(series: pd.Series, window: int) -> pd.Series:
+    """Rolling percent-rank of a window's last value among all values in that window.
+
+    Vectorized via ``sliding_window_view`` instead of ``rolling().apply()``
+    (PERF-2): counts, for each window, how many of its values are strictly
+    less than the window's own last value (the last value never counts
+    against itself, since ``x < x`` is always False). Windows containing
+    any NaN are explicitly masked to NaN (comparisons against/with NaN are
+    always False, so they would otherwise silently undercount rather than
+    propagate), matching ``rolling(window).apply``'s default
+    ``min_periods == window`` behavior.
+    """
+    values = series.to_numpy(dtype=np.float64)
+    n = len(values)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if window <= 1:
+        # Matches the original callback's explicit `len(x) > 1` guard: a
+        # single-point window is always rank 0.0, unless that point itself
+        # is NaN (pandas' min_periods=1 then withholds the NaN result
+        # without calling the callback at all).
+        out = np.where(np.isnan(values), np.nan, 0.0)
+        return pd.Series(out, index=series.index)
+    if n < window:
+        return pd.Series(out, index=series.index)
+
+    windows = np.lib.stride_tricks.sliding_window_view(values, window)
+    last = windows[:, -1:]
+    valid = ~np.isnan(windows).any(axis=1)
+    count_less = (windows < last).sum(axis=1)
+    result = 100.0 * count_less / (window - 1)
+    out[window - 1 :] = np.where(valid, result, np.nan)
+    return pd.Series(out, index=series.index)
+
+
 def connors_rsi(
     series: pd.Series, rsi_window: int = 3, streak_window: int = 2, rank_window: int = 100
 ) -> pd.Series:
     """Connors RSI: blend of short RSI, streak-length RSI, and percent-rank of return."""
     price_rsi = rsi(series, rsi_window)
 
-    diff = series.diff()
-    streak_values = np.zeros(len(series), dtype=np.float64)
-    diff_values = diff.to_numpy(dtype=np.float64)
-    for i in range(1, len(diff_values)):
-        d = diff_values[i]
-        prev = streak_values[i - 1]
-        if d > 0.0:
-            streak_values[i] = prev + 1.0 if prev > 0.0 else 1.0
-        elif d < 0.0:
-            streak_values[i] = prev - 1.0 if prev < 0.0 else -1.0
-        else:
-            streak_values[i] = 0.0
-    streak = pd.Series(streak_values, index=series.index)
+    streak = _streak(series.diff())
     streak_rsi = rsi(streak, streak_window)
 
     pct_change = series.pct_change()
-
-    def _percent_rank(x: np.ndarray) -> float:
-        last = x[-1]
-        return float(100.0 * (x < last).sum() / (len(x) - 1)) if len(x) > 1 else 0.0
-
-    percent_rank = pct_change.rolling(rank_window).apply(_percent_rank, raw=True)
+    percent_rank = _rolling_percent_rank(pct_change, rank_window)
 
     return (price_rsi + streak_rsi + percent_rank) / 3.0
 

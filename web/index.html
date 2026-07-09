@@ -796,6 +796,18 @@ footer {
   function runTypeChip(runType) {
     return el("span", { class: "pill neutral", text: runType });
   }
+  function computeCacheChip(computeCache) {
+    // PERF-2: shows which stages served their result from the on-disk
+    // threshold-independent compute cache rather than recomputing it.
+    if (!computeCache) return null;
+    var anyHit = computeCache.sweep === "hit" || computeCache.regime === "hit";
+    if (!anyHit) return null;
+    return el("span", {
+      class: "pill solid",
+      title: "sweep: " + computeCache.sweep + ", regime: " + computeCache.regime + " (fingerprint " + computeCache.fingerprint_prefix + ")",
+      text: "cached",
+    });
+  }
   function debounce(fn, ms) {
     var t = null;
     return function () {
@@ -1362,7 +1374,12 @@ footer {
     });
     container.appendChild(thBlock);
 
-    container.appendChild(el("div", { class: "lbl", style: "margin-bottom:8px;", text: "transparency: " + report.transparency.n_configs + " configs × " + report.transparency.n_assets + " assets = " + report.transparency.n_total_backtests + " total backtests" }));
+    var transparencyRow = el("div", { style: "display:flex; align-items:center; gap:8px; margin-bottom:8px;" }, [
+      el("span", { class: "lbl", text: "transparency: " + report.transparency.n_configs + " configs × " + report.transparency.n_assets + " assets = " + report.transparency.n_total_backtests + " total backtests" }),
+    ]);
+    var cacheChip = computeCacheChip(report.compute_cache);
+    if (cacheChip) transparencyRow.appendChild(cacheChip);
+    container.appendChild(transparencyRow);
 
     // attrition path
     var steps = [

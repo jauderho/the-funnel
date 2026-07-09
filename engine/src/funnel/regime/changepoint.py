@@ -48,10 +48,18 @@ class ChangePointDetector:
         min_train: int = 60,
         refit_every: int = 21,
         max_window: int | None = None,
+        jump: int = 5,
     ) -> None:
         self.min_train = min_train
         self.refit_every = refit_every
         self.max_window = max_window
+        self.jump = jump
+        """Subsample factor passed to ``ruptures.Pelt(jump=...)``: PELT only
+        considers candidate breakpoints every ``jump`` points, trading
+        breakpoint-location precision for speed (roughly linear cost
+        reduction). Default ``5`` is unchanged from before this parameter
+        existed. See ``PERF-2`` benchmarking notes for the measured
+        runtime-vs-label-change tradeoff at higher values."""
         """Cap, in days, on how much trailing history PELT sees at each
         refit. ``None`` (the default) preserves the original unbounded
         **expanding** window exactly — every refit still sees the full
@@ -99,7 +107,7 @@ class ChangePointDetector:
             return Regime.CHOPPY
 
         try:
-            algo = rpt.Pelt(model="l2", min_size=_MIN_SEGMENT_SIZE, jump=5).fit(
+            algo = rpt.Pelt(model="l2", min_size=_MIN_SEGMENT_SIZE, jump=self.jump).fit(
                 clean.reshape(-1, 1)
             )
             breakpoints = algo.predict(pen=np.log(len(clean)))

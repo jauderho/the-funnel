@@ -31,7 +31,9 @@ HONESTY RULES (PLAN.md, "v2 — Options Overlay Module")
 """
 
 import logging
+import multiprocessing as mp
 import os
+import sys
 from collections.abc import Callable, Mapping
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass
@@ -281,6 +283,13 @@ def _score_overlay_symbol(
     ]
 
 
+def _mp_context() -> mp.context.BaseContext | None:
+    """Process-pool start method — identical policy to
+    ``funnel.backtest.sweep._mp_context``: ``forkserver`` on macOS,
+    platform default elsewhere."""
+    return mp.get_context("forkserver") if sys.platform == "darwin" else None
+
+
 def _resolve_n_workers(n_workers: int | None, n_symbols: int) -> int:
     """Resolve the requested worker count — identical policy to
     ``funnel.backtest.sweep._resolve_n_workers``."""
@@ -339,7 +348,7 @@ def _run_overlay_sweep_parallel(
     results assembled in submission order, ``should_stop`` polled between
     completed futures, non-blocking teardown on cancellation/error.
     """
-    executor = ProcessPoolExecutor(max_workers=n_workers)
+    executor = ProcessPoolExecutor(max_workers=n_workers, mp_context=_mp_context())
     rows_by_symbol: dict[str, list[dict[str, object]]] = {}
     try:
         futures = {
