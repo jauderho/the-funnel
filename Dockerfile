@@ -11,9 +11,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim
 
+# Least privilege (Checkov CKV_DOCKER_3): run as a dedicated non-root user.
+# The runs/ and data/ bind mounts must be writable by uid 1000 on generic
+# Linux hosts (chown them or override `user:` in compose); OrbStack/Docker
+# Desktop map host-user permissions transparently.
+RUN groupadd --gid 1000 funnel && useradd --uid 1000 --gid funnel --no-create-home funnel
+
 WORKDIR /app
-COPY --from=builder /app/engine /app/engine
-COPY web/ web/
+COPY --from=builder --chown=funnel:funnel /app/engine /app/engine
+COPY --chown=funnel:funnel web/ web/
+RUN mkdir -p /app/runs /app/data && chown funnel:funnel /app/runs /app/data
 
 ENV PATH="/app/engine/.venv/bin:${PATH}"
 ENV FUNNEL_WEB_DIR="/app/web"
@@ -21,6 +28,13 @@ ENV FUNNEL_WEB_DIR="/app/web"
 WORKDIR /app/engine
 
 EXPOSE 8000
+
+USER funnel
+
+# CKV_DOCKER_2: liveness probe against the app's own health endpoint (no
+# curl in the slim image; stdlib urllib keeps the image dependency-free).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)"]
 
 # hmmlearn's compiled _hmmc extension resolves libstdc++ RTTI/vtable symbols
 # (e.g. _ZTVN10__cxxabiv120__function_type_infoE) via RTLD_LOCAL dlopen, which
