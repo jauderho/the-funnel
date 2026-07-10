@@ -3,9 +3,16 @@
 
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import pytest
 
-from funnel.compute_cache import default_compute_cache_dir, evict_oldest, write_cache_metadata
+from funnel.compute_cache import (
+    default_compute_cache_dir,
+    evict_oldest,
+    hash_dataframe,
+    write_cache_metadata,
+)
 
 
 def test_default_compute_cache_dir_honors_funnel_compute_cache_dir_env(
@@ -74,3 +81,36 @@ def test_evict_oldest_is_noop_when_under_the_cap(tmp_path: Path) -> None:
     evict_oldest(cache_dir, "only-one*.parquet", keep=20)
 
     assert (cache_dir / "only-one.parquet").exists()
+
+
+def test_hash_dataframe_invariant_to_datetime_index_precision() -> None:
+    """yfinance yields datetime64[s]; a parquet round-trip yields [ms] — the
+    same instants at any precision must hash identically (a spurious cache
+    miss otherwise follows every data refresh), while a genuine value
+    change must still change the hash."""
+    rng = np.random.default_rng(7)
+    values = {c: rng.normal(100.0, 5.0, 40) for c in ("open", "high", "low", "close", "volume")}
+    base_index = pd.bdate_range("2020-01-01", periods=40)
+
+    hashes = set()
+    for unit in ("s", "ms", "us", "ns"):
+        df = pd.DataFrame(values, index=base_index.astype(f"datetime64[{unit}]"))
+        hashes.add(hash_dataframe(df.astype("float64")))
+    assert len(hashes) == 1
+
+    perturbed = pd.DataFrame(values, index=base_index).astype("float64")
+    perturbed.iloc[3, perturbed.columns.get_loc("close")] += 0.0001
+    assert hash_dataframe(perturbed) not in hashes
+
+
+def test_hash_dataframe_survives_parquet_round_trip(tmp_path: Path) -> None:
+    rng = np.random.default_rng(11)
+    df = pd.DataFrame(
+        {c: rng.normal(100.0, 5.0, 40) for c in ("open", "high", "low", "close", "volume")},
+        index=pd.bdate_range("2020-01-01", periods=40).astype("datetime64[s]"),
+    ).astype("float64")
+    path = tmp_path / "rt.parquet"
+    df.to_parquet(path)
+    round_tripped = pd.read_parquet(path)
+
+    assert hash_dataframe(df) == hash_dataframe(round_tripped)

@@ -53,9 +53,19 @@ def default_compute_cache_dir() -> Path:
 
 
 def hash_dataframe(df: pd.DataFrame) -> str:
-    """Content hash of a frame's index and values (order-sensitive)."""
+    """Content hash of a frame's index and values (order-sensitive).
+
+    Datetime indexes are canonicalized to int64 nanoseconds before hashing:
+    the same instants stored at different precisions (yfinance returns
+    ``datetime64[s]``, a parquet round-trip yields ``datetime64[ms]``) must
+    hash identically, otherwise the first re-run after a data refresh pays
+    a spurious cache miss. Genuine value differences still change the hash.
+    """
     h = hashlib.sha256()
-    h.update(pd.util.hash_pandas_object(df.index).to_numpy(dtype=np.uint64).tobytes())
+    if isinstance(df.index, pd.DatetimeIndex):
+        h.update(np.ascontiguousarray(df.index.astype("datetime64[ns]").asi8).tobytes())
+    else:
+        h.update(pd.util.hash_pandas_object(df.index).to_numpy(dtype=np.uint64).tobytes())
     for col in sorted(df.columns):
         h.update(col.encode())
         h.update(np.ascontiguousarray(df[col].to_numpy(dtype=np.float64)).tobytes())

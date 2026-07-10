@@ -3,6 +3,15 @@
 Known gaps and deferred work, stated plainly per the honesty-by-design principle in
 `PLAN.md` — nothing here is hidden or silently worked around.
 
+- **Yahoo's adjusted prices jitter between downloads.** Observed empirically
+  (PERF-2 verification): two SPY downloads hours apart differ in the 4th
+  decimal (float32-grade noise in Yahoo's adjustment math), so any genuine
+  data re-download legitimately invalidates the compute cache — the cache
+  accelerates *iteration on cached data* (slider/profile changes → seconds),
+  not runs that refresh data. Index-precision artifacts (s vs ms) are
+  canonicalized in the fingerprint; value jitter is real data change and is
+  deliberately NOT masked.
+
 - **Real yfinance data path is now verified end-to-end (resolved), with one
   network caveat.** A watched "Retirement Core" run inside the compose container
   fetched all 31 assets and completed 4650 real backtests (2217 positive OOS →

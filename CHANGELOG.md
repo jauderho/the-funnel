@@ -232,6 +232,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (with a fixed race in the yfinance csrf-fallback flag, now lock-guarded).
 - Net effect on the synthetic full grid (150×31): cold 57 s → 8.3 s; warm
   (slider change) → 3.6 s.
+- Cache fingerprints canonicalize datetime indexes to nanoseconds before
+  hashing: yfinance returns second-precision indexes while parquet
+  round-trips yield milliseconds, which previously cost one spurious cache
+  miss after every data refresh. (Yahoo's adjusted values themselves jitter
+  between downloads — a genuine re-download still misses by design.)
 
 ### Fixed (adversarial review findings)
 
