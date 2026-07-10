@@ -13,8 +13,23 @@ on:
 permissions: read-all
 
 jobs:
+  # `secrets` isn't a valid context in `jobs.<job_id>.if`, so detect presence
+  # of SCORECARD_TOKEN in a cheap first job and gate the real job on its output.
+  check-secret:
+    runs-on: ubuntu-26.04
+    outputs:
+      has_token: ${{ steps.check.outputs.has_token }}
+    steps:
+      - id: check
+        run: echo "has_token=${{ secrets.SCORECARD_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
   analysis:
     name: Scorecards analysis
+    needs: check-secret
+    # Skip gracefully when the SCORECARD_TOKEN secret hasn't been configured,
+    # instead of failing on every push (the default GITHUB_TOKEN cannot
+    # authenticate the results-publishing step).
+    if: needs.check-secret.outputs.has_token == 'true'
     runs-on: ubuntu-26.04
     permissions:
       # Needed to upload the results to code-scanning dashboard.

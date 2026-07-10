@@ -11,7 +11,21 @@ on:
 permissions: read-all
 
 jobs:
+  # `secrets` isn't a valid context in `jobs.<job_id>.if`, so detect presence
+  # of GITLAB_TOKEN in a cheap first job and gate the real job on its output.
+  check-secret:
+    runs-on: ubuntu-26.04
+    outputs:
+      has_token: ${{ steps.check.outputs.has_token }}
+    steps:
+    - id: check
+      run: echo "has_token=${{ secrets.GITLAB_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
   sync:
+    needs: check-secret
+    # Skip gracefully when the GITLAB_TOKEN secret hasn't been configured,
+    # instead of failing on every push.
+    if: needs.check-secret.outputs.has_token == 'true'
     runs-on: ubuntu-26.04
     name: Git Repo Sync
     steps:
