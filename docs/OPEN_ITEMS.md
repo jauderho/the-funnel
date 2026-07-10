@@ -118,8 +118,14 @@ Known gaps and deferred work, stated plainly per the honesty-by-design principle
   roll-at-5-DTE configs still legitimately report 0 assignments — that now
   reflects a real policy choice, contrasted in the same report against the
   hold-to-expiry rows.
-- **Repo-level GitHub Actions workflows are currently failing** (unrelated to the
-  funnel engine itself): Codespell, Gitlab Sync, Lint Code Base, and Security
-  Scorecard all show `failure` as of this pass (`bash scripts/checkWorkflows.sh
-  --dry-run`). Not investigated here — out of scope for the engine/UI work, but
-  worth triaging before relying on CI green as a signal.
+- **Repo-level GitHub Actions workflows triaged and fixed in-repo
+  (2026-07-10), pending a push to confirm green.** Root causes, each verified
+  from actual job logs: Codespell flagged three deliberate terms
+  (implementor/statics/trough — now in `.codespellignore`, no genuine typos
+  found); Super-Linter's Checkov found two genuine Dockerfile gaps (root
+  user, no healthcheck — both fixed in the Dockerfile, verified end-to-end
+  in the running container); GitLab Sync and Security Scorecard fail only
+  because `GITLAB_TOKEN`/`SCORECARD_TOKEN` secrets are unset — they now
+  skip gracefully instead of failing. USER DECISION: add those two secrets
+  if the sync/scorecard should actually run. Final workflow status needs
+  the next push to verify.
