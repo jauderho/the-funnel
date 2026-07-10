@@ -5,6 +5,13 @@ services:
       - "8000:8000"
     volumes:
       - ./runs:/app/runs
+      # Persist the market-data parquet cache AND the threshold-independent
+      # compute cache across container rebuilds. The backtest window is a
+      # fixed range, so data is downloaded once ever per range — this keeps
+      # warm re-runs at ~3s after rebuilds and sidesteps Yahoo's
+      # adjusted-price jitter (re-downloads return values differing at
+      # float32 precision, which legitimately invalidates the cache).
+      - ./data:/app/data
     environment:
       FUNNEL_RUNS_DIR: /app/runs
     # yfinance bootstraps its auth cookie from fc.yahoo.com, which is on

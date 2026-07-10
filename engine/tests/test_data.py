@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pytest
 import yfinance
@@ -281,3 +282,63 @@ def test_fetch_csrf_switch_is_thread_safe_under_concurrent_first_failures(
 
     assert switch_calls["count"] == 1
     assert sources_module._csrf_strategy_active is True
+
+
+def test_cached_source_never_persists_empty_frames(tmp_path: Path) -> None:
+    """A rate-limited/blocked download returns an empty frame; caching it
+    would poison every future run until someone manually deleted the file."""
+
+    class FlakySource:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+            self.calls += 1
+            if self.calls == 1:
+                return _empty_contract_frame()
+            return _contract_frame()
+
+    flaky = FlakySource()
+    cached = CachedSource(flaky, cache_dir=tmp_path)  # type: ignore[arg-type]
+
+    first = cached.fetch("SPY", date(2024, 1, 1), date(2024, 2, 1))
+    assert first.empty
+    assert list(tmp_path.glob("*.parquet")) == []  # nothing persisted
+
+    second = cached.fetch("SPY", date(2024, 1, 1), date(2024, 2, 1))
+    assert not second.empty
+    assert flaky.calls == 2
+    assert len(list(tmp_path.glob("*.parquet"))) == 1  # good frame cached
+
+    third = cached.fetch("SPY", date(2024, 1, 1), date(2024, 2, 1))
+    assert not third.empty
+    assert flaky.calls == 2  # served from cache
+
+
+def test_cached_source_discards_preexisting_empty_cache_file(tmp_path: Path) -> None:
+    """Empty parquets written by the pre-fix code are treated as misses."""
+    empty_path = tmp_path / "SPY_2024-01-01_2024-02-01.parquet"
+    _empty_contract_frame().to_parquet(empty_path)
+
+    class GoodSource:
+        def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+            return _contract_frame()
+
+    cached = CachedSource(GoodSource(), cache_dir=tmp_path)  # type: ignore[arg-type]
+    result = cached.fetch("SPY", date(2024, 1, 1), date(2024, 2, 1))
+    assert not result.empty
+    refreshed = pd.read_parquet(empty_path)
+    assert not refreshed.empty  # the poisoned file was replaced
+
+
+def _contract_frame() -> pd.DataFrame:
+    idx = pd.bdate_range("2024-01-01", periods=20)
+    data = {c: np.linspace(100.0, 110.0, 20) for c in OHLCV_COLUMNS}
+    return pd.DataFrame(data, index=idx).astype("float64")
+
+
+def _empty_contract_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {c: pd.Series(dtype="float64") for c in OHLCV_COLUMNS},
+        index=pd.DatetimeIndex([]),
+    )

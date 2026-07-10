@@ -237,6 +237,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   round-trips yield milliseconds, which previously cost one spurious cache
   miss after every data refresh. (Yahoo's adjusted values themselves jitter
   between downloads — a genuine re-download still misses by design.)
+- Data and compute caches now persist across container rebuilds
+  (`./data:/app/data` volume in compose.yml) — the backtest window is a
+  fixed range, so data downloads once ever and warm 3 s runs survive
+  rebuilds; this also structurally sidesteps Yahoo's adjusted-price jitter.
+- `CachedSource` no longer persists empty frames: a rate-limited/blocked
+  download used to poison the cache as a permanent empty parquet (every
+  later run honestly reporting zero assets until the file was hand-deleted);
+  empty fetches are now returned uncached, and pre-existing empty cache
+  files are discarded and refetched.
 
 ### Fixed (adversarial review findings)
 

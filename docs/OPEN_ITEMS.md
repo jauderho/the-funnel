@@ -3,14 +3,21 @@
 Known gaps and deferred work, stated plainly per the honesty-by-design principle in
 `PLAN.md` — nothing here is hidden or silently worked around.
 
-- **Yahoo's adjusted prices jitter between downloads.** Observed empirically
-  (PERF-2 verification): two SPY downloads hours apart differ in the 4th
-  decimal (float32-grade noise in Yahoo's adjustment math), so any genuine
-  data re-download legitimately invalidates the compute cache — the cache
-  accelerates *iteration on cached data* (slider/profile changes → seconds),
-  not runs that refresh data. Index-precision artifacts (s vs ms) are
-  canonicalized in the fingerprint; value jitter is real data change and is
-  deliberately NOT masked.
+- **Yahoo's adjusted prices jitter between downloads (structurally
+  sidestepped, 2026-07-10).** Two downloads hours apart differ at float32
+  precision in Yahoo's adjustment math, so every re-download legitimately
+  invalidates the compute cache — and rounding cannot fix it (across ~620k
+  panel values, any quantization still flips some value). The fix is to
+  stop re-downloading: the backtest window is a fixed range, so
+  `compose.yml` now mounts `./data:/app/data`, persisting the parquet and
+  compute caches across container rebuilds — verified: a destroyed and
+  recreated container serves a full run from cache in 3 s with zero
+  downloads. Related defect found and fixed during verification:
+  `CachedSource` used to persist EMPTY frames (a rate-limited download
+  poisoned the cache until manually deleted); empty results are now never
+  cached, and pre-existing empty cache files are treated as misses and
+  refetched (regression-tested). Value jitter on genuine refreshes remains
+  deliberately unmasked.
 
 - **Real yfinance data path is now verified end-to-end (resolved), with one
   network caveat.** A watched "Retirement Core" run inside the compose container

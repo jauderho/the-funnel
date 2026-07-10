@@ -173,9 +173,26 @@ class CachedSource:
     def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         path = self._cache_path(symbol, start, end)
         if path.exists():
-            return pd.read_parquet(path)
+            cached = pd.read_parquet(path)
+            if not cached.empty:
+                return cached
+            # An empty cached frame is a persisted transient failure (e.g. a
+            # rate-limited/blocked download), not a fact about the symbol —
+            # treat it as a miss and retry the wrapped source.
+            logger.warning(
+                "cached frame for %s (%s..%s) is empty; discarding and refetching",
+                symbol,
+                start,
+                end,
+            )
+            path.unlink()
 
         df = self._source.fetch(symbol, start, end)
+        if df.empty:
+            # Never persist an empty result: a failed download cached as
+            # parquet would poison every future run until manually deleted.
+            logger.warning("fetch for %s (%s..%s) returned empty; not caching", symbol, start, end)
+            return df
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         df.to_parquet(path)
         return df
